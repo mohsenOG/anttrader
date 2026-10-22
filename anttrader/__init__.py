@@ -1,1 +1,0 @@
-"""AntTrader historical research project."""
