@@ -6,7 +6,8 @@ AntTrader investigates whether the behavior of Langton's Ant, a cellular automat
 can provide predictive information about Gold on the **1-hour timeframe**.
 Profitability is unknown.
 
-**Status:** Topic 1 foundation scaffold. The pipeline and dashboard display setup
+**Status:** Topic 1 foundation complete and verified. The pipeline and dashboard
+display setup
 status. Data loading, simulation, signal generation, and backtesting are not yet
 implemented. Topics 2-5 require detailed approval.
 

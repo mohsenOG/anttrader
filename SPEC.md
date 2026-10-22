@@ -12,7 +12,8 @@ The eventual application will load historical candles, encode market information
 as a grid, simulate Langton's Ant, extract numerical features, generate BUY, SELL,
 and HOLD signals, backtest them, and display results in Streamlit.
 
-Topic 1 is the current implementation milestone. It provides project setup,
+Topic 1 is the current implementation milestone. Its foundation is complete and
+verified. It provides project setup,
 documentation, configuration, tests, and clearly labeled runnable placeholders.
 Topics 2-5 are pending detailed user approval. The module layout does not finalize
 their interfaces or algorithms.
@@ -41,7 +42,7 @@ Git. The current pipeline and dashboard only display setup status.
 
 ## Planning topics
 
-1. **GitHub, Codex & Agent Setup**: current implementation milestone.
+1. **GitHub, Codex & Agent Setup**: current milestone; foundation complete.
 2. **XAU/USD Data & Grid Encoding**: pending detailed approval.
 3. **Langton's Ant Simulation & Feature Extraction**: pending detailed approval.
 4. **Signal Decoder & Backtesting**: pending detailed approval.

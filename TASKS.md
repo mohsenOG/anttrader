@@ -13,7 +13,7 @@
 - [x] Add basic pytest and Ruff setup.
 - [x] Create minimal runnable application scaffolding.
 - [x] Verify installation and tests.
-- [ ] Commit and push the completed foundation.
+- [x] Commit and push the completed foundation.
 
 ## Future topics
 
