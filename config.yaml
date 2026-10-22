@@ -1,0 +1,16 @@
+# Confirmed project parameters.
+symbol: XAU/USD
+timeframe: 1H
+trading_mode: historical_research_only
+
+# Provisional experimental starting values. Not optimized or final.
+# These values do not drive behavior in the Topic 1 scaffold.
+# Topics 2-5 must define the missing research rules before implementation.
+research_defaults:
+  number_of_ants: 1
+  lookback_returns: 256
+  grid_size: [16, 16]
+  simulation_steps: 2048
+  grid_boundaries: toroidal
+  decoder: logistic_regression
+  prediction_horizon_bars: 4
