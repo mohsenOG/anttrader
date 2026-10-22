@@ -7,6 +7,7 @@ timestamp_timezone: UTC
 timestamp_format: ISO8601
 candle_timestamp: open
 quote_side: bid
+drop_zero_volume: true
 lookback_returns: 256
 grid_size: [16, 16]
 encoding: binary_log_return_sign

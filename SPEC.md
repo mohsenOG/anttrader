@@ -42,6 +42,13 @@ belongs in `data/` and generated outputs in `results/`; both are ignored by Git.
 - Normal session and weekend closures are permitted. Never invent, forward-fill,
   or interpolate candles. Report gaps over one hour for inspection without
   claiming that a gap is necessarily a data error. No trading calendar in v1.
+- The supplied Dukascopy archive includes flat, zero-volume rows during closures.
+  With `drop_zero_volume: true`, exclude these rows before selecting windows and
+  report their count. Validate prices first; a non-flat zero-volume row is an
+  error, not a row to discard silently. Retain flat candles with positive volume.
+  If volume is absent, do not infer closures from unchanged prices. Keep the
+  source CSV unchanged. The loader API defaults this source-specific option off;
+  config.yaml enables it for the supplied dataset.
 
 ### Source conventions and acquisition
 

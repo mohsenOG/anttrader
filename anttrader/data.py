@@ -23,6 +23,7 @@ def validate_candles(
     source_timezone: str | None = None,
     as_of: object | None = None,
     timestamp_format: str = "ISO8601",
+    drop_zero_volume: bool = False,
 ) -> pd.DataFrame:
     """Return sorted, validated candles completed at as_of (default: now in UTC).
 
@@ -32,7 +33,11 @@ def validate_candles(
     repaired. The returned frame's attrs['validation_report'] records excluded
     incomplete candles and gaps over one hour (all gaps need inspection; no
     trading-calendar classification is attempted). Optional volume is preserved.
+    With drop_zero_volume, remove source flat/no-tick rows only when volume is
+    present. Non-flat zero-volume rows are rejected; traded flat rows are kept.
     """
+    if not isinstance(drop_zero_volume, bool):
+        raise TypeError("drop_zero_volume must be a boolean.")
     required = ["timestamp", *OHLC]
     missing = sorted(set(required) - set(frame.columns))
     if missing:
@@ -84,6 +89,22 @@ def validate_candles(
     completed = candles["timestamp"] + HOUR <= cutoff
     excluded = int((~completed).sum())
     candles = candles.loc[completed].reset_index(drop=True)
+    excluded_zero_volume = 0
+    if drop_zero_volume and "volume" in candles:
+        candles["volume"] = pd.to_numeric(candles["volume"], errors="coerce")
+        volume = candles["volume"]
+        if not (np.isfinite(volume) & volume.ge(0)).all():
+            raise ValueError(
+                "Volume must be numeric, finite, and nonnegative for filtering."
+            )
+        zero_volume = volume.eq(0)
+        nonflat = candles[OHLC].ne(candles["close"], axis=0).any(axis=1)
+        if (zero_volume & nonflat).any():
+            raise ValueError(
+                "Zero-volume candles must have flat OHLC before exclusion."
+            )
+        excluded_zero_volume = int(zero_volume.sum())
+        candles = candles.loc[~zero_volume].reset_index(drop=True)
     intervals = candles["timestamp"].diff()
     gaps = intervals > HOUR
     examples = [
@@ -97,6 +118,7 @@ def validate_candles(
     candles.attrs["validation_report"] = {
         "valid_candles": len(candles),
         "excluded_incomplete_candles": excluded,
+        "excluded_zero_volume_candles": excluded_zero_volume,
         "gap_count": int(gaps.sum()),
         "gap_examples": examples,
         "as_of": cutoff.isoformat(),
@@ -110,12 +132,14 @@ def load_gold_data(
     source_timezone: str | None = None,
     as_of: object | None = None,
     timestamp_format: str = "ISO8601",
+    drop_zero_volume: bool = False,
 ) -> pd.DataFrame:
     """Load a comma-delimited CSV; see validate_candles for the input contract.
 
     Headers are case-insensitive. Dukascopy 'Gmt time' and 'Local time' headers
     are accepted as timestamp aliases, but still require explicit timezone
-    information for naive values. For DD.MM.YYYY exports pass
+    information for naive values. 'time_utc' is also an accepted header alias.
+    For DD.MM.YYYY exports pass
     timestamp_format='%d.%m.%Y %H:%M:%S.%f'.
     """
     try:
@@ -123,7 +147,13 @@ def load_gold_data(
     except pd.errors.EmptyDataError as exc:
         raise ValueError("The candle CSV is empty.") from exc
     frame.columns = frame.columns.str.strip().str.lower()
-    frame = frame.rename(columns={"gmt time": "timestamp", "local time": "timestamp"})
+    frame = frame.rename(
+        columns={
+            "gmt time": "timestamp",
+            "local time": "timestamp",
+            "time_utc": "timestamp",
+        }
+    )
     if frame.columns.duplicated().any():
         raise ValueError("Duplicate CSV column names after header normalization.")
     return validate_candles(
@@ -131,4 +161,5 @@ def load_gold_data(
         source_timezone=source_timezone,
         as_of=as_of,
         timestamp_format=timestamp_format,
+        drop_zero_volume=drop_zero_volume,
     )

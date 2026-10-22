@@ -160,3 +160,48 @@ def test_empty_csv(tmp_path, content):
 def test_invalid_timestamp(tmp_path, timestamp):
     with pytest.raises(ValueError, match="Invalid timestamp"):
         load_gold_data(write_csv(tmp_path, timestamp=[timestamp, "2024-01-05T21:00Z"]))
+
+
+def test_closed_hours_filtered_but_traded_flat_candles_kept(tmp_path):
+    path = tmp_path / "synthetic_closures.csv"
+    prices = [100, 100, 100, 100, 101]
+    frame = pd.DataFrame(
+        {
+            "time_utc": [
+                "2024-01-05 20:00:00",
+                "2024-01-05 21:00:00",
+                "2024-01-06 00:00:00",
+                "2024-01-07 23:00:00",
+                "2024-01-08 00:00:00",
+            ],
+            **{column: prices for column in ["open", "high", "low", "close"]},
+            "volume": [2, 0, 0, 1, 2],
+        }
+    )
+    frame.iloc[::-1].to_csv(path, index=False)
+    original = path.read_bytes()
+    kept = load_gold_data(path, source_timezone="UTC", drop_zero_volume=True)
+    assert kept.close.tolist() == [100, 100, 101]
+    assert kept.volume.tolist() == [2, 1, 2]
+    assert kept.timestamp.iloc[1] == pd.Timestamp("2024-01-07T23:00:00Z")
+    assert kept.attrs["validation_report"]["excluded_zero_volume_candles"] == 2
+    assert kept.attrs["validation_report"]["gap_count"] == 1
+    assert len(load_gold_data(path, source_timezone="UTC")) == 5
+    assert path.read_bytes() == original
+
+
+def test_volume_remains_optional_with_filter_enabled(tmp_path):
+    assert len(load_gold_data(write_csv(tmp_path), drop_zero_volume=True)) == 2
+
+
+def test_nonflat_zero_volume_is_rejected_before_filtering(tmp_path):
+    with pytest.raises(ValueError, match="Zero-volume candles must have flat OHLC"):
+        load_gold_data(write_csv(tmp_path, volume=[0, 1]), drop_zero_volume=True)
+
+
+@pytest.mark.parametrize("volume", [-1, np.nan, np.inf, "invalid"])
+def test_invalid_volume_cannot_be_silently_filtered(tmp_path, volume):
+    with pytest.raises(
+        ValueError, match="Volume must be numeric, finite, and nonnegative"
+    ):
+        load_gold_data(write_csv(tmp_path, volume=[volume, 1]), drop_zero_volume=True)

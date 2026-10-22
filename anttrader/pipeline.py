@@ -48,6 +48,7 @@ def main(config_path: str | Path = DEFAULT_CONFIG) -> None:
             path,
             source_timezone=config["timestamp_timezone"],
             timestamp_format=config["timestamp_format"],
+            drop_zero_volume=config["drop_zero_volume"],
         )
         print(f"AntTrader: {len(candles):,} validated completed candles.")
         if not candles.empty:
