@@ -1,11 +1,19 @@
-# Confirmed project parameters.
+# Confirmed market data and grid parameters.
 symbol: XAU/USD
 timeframe: 1H
-
-
-number_of_ants: 1
+data_source: Dukascopy
+historical_csv: data/xauusd_h1_bid.csv
+timestamp_timezone: UTC
+timestamp_format: ISO8601
+candle_timestamp: open
+quote_side: bid
 lookback_returns: 256
 grid_size: [16, 16]
+encoding: binary_log_return_sign
+layout: serpentine
+
+# Provisional future research defaults; not implemented by Topic 2.
+number_of_ants: 1
 simulation_steps: 2048
 grid_boundaries: toroidal
 decoder: logistic_regression
