@@ -30,7 +30,7 @@
 - [x] Verify integration with synthetic candles and the Streamlit scaffold.
 - [ ] Verify real Dukascopy data integration and the latest historical grid.
 - [x] Update README.
-- [ ] Commit and push changes.
+- [x] Commit and push changes (implementation 2534686, verified on origin/main).
 
 ### Verification status (2026-10-22)
 
