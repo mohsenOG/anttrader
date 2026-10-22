@@ -19,7 +19,7 @@
 
 - [x] Document approved specification.
 - [x] Configure historical data settings.
-- [ ] Obtain or prepare Dukascopy data.
+- [x] Obtain or prepare Dukascopy data.
 - [x] Implement CSV loader.
 - [x] Implement data validation.
 - [x] Implement return calculation.
@@ -28,22 +28,35 @@
 - [x] Implement historical rolling-window grid generation.
 - [x] Write tests.
 - [x] Verify integration with synthetic candles and the Streamlit scaffold.
-- [ ] Verify real Dukascopy data integration and the latest historical grid.
+- [x] Verify real Dukascopy data integration and the latest historical grid.
 - [x] Update README.
-- [x] Commit and push changes (implementation 2534686, verified on origin/main).
+- [x] Commit and push changes (completion fa895b2, verified on origin/main).
 
-### Verification status (2026-10-22)
+### Verification status (2026-10-23)
 
-- Python 3.13.11 in the local .venv: 69 pytest tests pass; Ruff passes.
-- Synthetic data-to-grid integration passes. The no-look-ahead test passes.
+Topic 2 is complete. No manual data-acquisition or verification step remains.
+
+- Python 3.13.11 in the local .venv: 77 pytest tests pass; Ruff passes.
+- Synthetic and real-data integration pass, including explicit no-look-ahead
+  checks, candle completion times, chronological windows, and serpentine layout.
 - Streamlit renders in AppTest and launches with HTTP 200 / health=ok.
-- The missing-CSV pipeline prints the source, settings, target path, and README
-  instructions. Existing .gitignore excludes full datasets; dependencies unchanged.
-- No real historical dataset is present. Archive requests returned HTTP 429 and
-  the Dukascopy JSON endpoint returned an AWS WAF challenge. Manual export and
-  real-data verification remain pending. See README.md for the exact export step.
-- Topic 2 is not fully complete. Real candle dates, counts, irregularities, and
-  latest-grid results cannot be reported until genuine data is loaded.
+- Genuine user-supplied Dukascopy XAU/USD H1 BID history spans opening times
+  2021-10-01 00:00 UTC through 2026-09-30 23:00 UTC. All 43,824 CSV rows match
+  the 60 cached monthly archives for timestamps, OHLC / 1,000, and rounded volume.
+- The configured loader excludes 14,257 flat zero-volume closure rows and retains
+  29,567 completed candles. It keeps traded flat candles. The original CSV is
+  unchanged, and all local data, cache files, and reports stay outside Git.
+- Filtering exposes 1,290 gaps over one hour, all accounted for by excluded source
+  rows. The maximum opening-time interval is 74 hours. No trading-calendar audit
+  is claimed; no invalid OHLC, duplicates, or missing prices were found.
+- Generated 29,311 grids. The latest decision is 2026-10-01 00:00 UTC, from a
+  257-close window opening 2026-09-15 19:00 UTC through 2026-09-30 23:00 UTC.
+  Its 16 x 16 grid contains 130 zeros and 126 ones; independent encoding passes.
+- README.md records the source format, SHA-256, reproduction commands, and the
+  local results/topic2_validation.json report. A fresh clone needs its own CSV;
+  the optional real-data test skips when that local dataset is absent.
+- The missing-CSV message remains tested. Dependencies and infrastructure are
+  unchanged. Topic 3 design can begin; no ant or trading logic was implemented.
 
 ## Future topics
 
