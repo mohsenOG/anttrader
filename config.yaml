@@ -13,9 +13,18 @@ grid_size: [16, 16]
 encoding: binary_log_return_sign
 layout: serpentine
 
-# Provisional future research defaults; not implemented by Topic 2.
-number_of_ants: 1
-simulation_steps: 2048
-grid_boundaries: toroidal
+# Approved Topic 3 simulation; one independent ant per historical window.
+simulation:
+  steps: 2048
+  start_row: 15
+  start_col: 0
+  initial_direction: north
+  boundary: toroidal
+  checkpoints: [256, 512, 1024, 2048]
+  ants: 1
+  reset_each_window: true
+feature_output: results/ant_features.csv
+
+# Provisional Topic 4 defaults.
 decoder: logistic_regression
 prediction_horizon_bars: 4

@@ -4,8 +4,9 @@ Experimental Langton's Ant research for spot gold (XAU/USD) on the **1-hour**
 timeframe. Profitability is unknown. This project uses historical data only.
 
 Implemented: project setup, validated CSV ingestion, binary log-return encoding,
-rolling serpentine grids, a command-line demonstration, and a Streamlit scaffold.
-Pending: ant simulation, feature extraction, signals, backtesting, and full charts.
+rolling serpentine grids, deterministic ant simulation, behavioral feature CSV
+export, optional replay recording, and a Streamlit scaffold.
+Pending: signals, backtesting, and the full dashboard.
 
 ## Installation
 
@@ -22,7 +23,7 @@ py -3.13 -m venv .venv
 Activation is optional. Use `.venv\Scripts\python.exe` instead of `python` and
 `.venv\Scripts\ruff.exe` instead of `ruff` if PowerShell blocks activation.
 No global execution-policy change is required. Configuration is in `config.yaml`.
-No additional dependencies or services are needed for Topic 2.
+No additional dependencies or services are needed for Topics 2 and 3.
 
 ## Market data
 
@@ -180,6 +181,8 @@ With the virtual environment active:
 ```powershell
 python -m anttrader.pipeline
 python -m anttrader.pipeline --config config.yaml
+python -m anttrader.pipeline --stage features
+python -m anttrader.pipeline --stage features --limit 100
 streamlit run app.py
 python -m pytest -q
 ruff check .
@@ -189,7 +192,8 @@ The pipeline resolves the CSV path relative to the configuration file. It prints
 the candle count, date range, validation report, number of historical grids, and
 latest grid with its decision time and window. If the CSV is absent, it prints
 setup instructions. It never supplies fake history. The Streamlit application
-shows project status; it does not run ant simulations or trading logic.
+shows project status. Run the feature command separately; dashboard animation
+and trading logic remain pending.
 
 Unit tests use small **synthetic** inputs in temporary directories. They validate OHLC,
 timezones, completion times, gaps, sign encoding, layout, rolling alignment, and
@@ -198,10 +202,123 @@ all rolling decision timestamps, grid count, the latest grid, and no look-ahead
 on genuine source data. It uses the explicit 2026-10-01 UTC cutoff for this sample.
 
 Read [SPEC.md](SPEC.md) for approved rules and open decisions, [TASKS.md](TASKS.md)
-for verified progress, and [AGENTS.md](AGENTS.md) for agent instructions. Preserve
-provisional future defaults in `config.yaml`: one ant, 2,048 steps, toroidal
-boundaries, logistic regression, and a four-bar prediction horizon. These future
-settings do not drive Topic 2 behavior.
+for verified progress, and [AGENTS.md](AGENTS.md) for agent instructions.
+`config.yaml` contains the approved simulation settings. Logistic regression
+and a four-bar prediction horizon remain provisional Topic 4 defaults.
+
+## Ant simulation and behavioral features
+
+Each historical market grid seeds one independent Langton's Ant. The simulator
+copies the 16 x 16 binary grid and starts at **row 15, column 0, heading North**.
+Each step reads the current cell, turns, flips that cell, then moves one cell:
+
+- White (0): turn right 90 degrees; flip to 1.
+- Black (1): turn left 90 degrees; flip to 0.
+
+North decreases row. East increases column. The grid wraps on all four edges
+(toroidal boundaries). Unwrapped displacement measures east/west and south/north
+movement without jumps at wrapped edges. The ant does not use prices or future
+returns. Every window resets all state. The source dataset and input grid stay
+unchanged.
+
+One continuous **2,048-step** run captures checkpoints after **256, 512, 1,024,
+and 2,048** completed transitions. A visit means reading a cell before moving;
+the final arrival alone is not a visit. At each checkpoint, visit counts sum to
+the completed steps.
+
+Each checkpoint has 15 numeric features, for **60 feature columns** in total:
+
+- `final_row`, `final_col`.
+- `heading_north`, `heading_east`, `heading_south`, `heading_west` (one-hot).
+- `unique_cells_visited`, `revisit_fraction`.
+- `horizontal_displacement`, `vertical_displacement` (east and south positive).
+- `right_turn_fraction`, `final_black_fraction`, `changed_cell_fraction`.
+- `visit_entropy`, `max_visit_concentration`.
+
+Names use checkpoint prefixes such as `s0256_final_row` and
+`s2048_visit_entropy`. Revisit fraction is `(steps - unique)/steps`. Black and
+changed-cell fractions divide counts by 256. Entropy is
+`-sum(p*ln(p))/ln(256)` over nonzero visit probabilities `p=visits/steps`.
+Concentration is `max(visits)/steps`. Changed cells compare the final state with
+the initial grid; repeated flips can cancel. Full definitions are in SPEC.md.
+
+### Historical feature CSV
+
+```powershell
+python -m anttrader.pipeline --stage features
+```
+
+This validates configured history, streams the existing chronological grid
+iterator, simulates each grid independently, and exports one row per decision
+timestamp. `results/ant_features.csv` starts with UTC `decision_timestamp`, then
+ascending checkpoint features in the order above. All numeric features are
+finite. No labels, future returns, predictions, signals, or P&L are included.
+
+The command reports candle/grid counts, transitions, checkpoints, feature count,
+output path, elapsed time, and failures. A failed window raises an error with
+its decision timestamp; no window is silently skipped. A temporary CSV preserves
+the previous output if simulation fails. The adjacent
+`results/ant_features.metadata.json` records the input/configuration SHA-256,
+configuration, UTC cutoff, counts, runtime, and Python/library versions.
+Both generated files stay outside Git.
+
+`--limit 100` processes only the **first** 100 eligible windows for quick checks.
+It writes the same configured output path and replaces an existing result on
+success. Run without `--limit` to regenerate the complete dataset. To retain a
+sample separately, use a separate config file with a different `feature_output`.
+CSV and output paths are relative to that config file. The default command
+`python -m anttrader.pipeline` still prints the latest Topic 2 grid.
+
+### Replay interface
+
+```python
+from anttrader.simulation import simulate
+from anttrader.features import extract_features
+
+# window comes from iter_historical_grids(candles).
+result = simulate(window.grid, record_trajectory=True)
+features = extract_features(result)
+print(result.checkpoints[-1].heading)
+reconstructed = result.initial_grid.copy()
+for row, col, direction in result.trajectory[:-1]:
+    reconstructed[row, col] ^= 1
+```
+
+The trajectory contains the initial pose, then the pose after each move. Direction
+codes are North=0, East=1, South=2, West=3. Flip each departing pose's cell to
+reconstruct the final grid; consecutive poses describe each movement. Replay
+retains no per-step grid copies. Batch mode leaves `trajectory=None` and keeps
+only four checkpoint grids and visit-count matrices per active simulation.
+There is no interactive animation in Topic 3.
+
+Unit tests include a hand-calculated eight-step trajectory, all four wrapped
+edges, exact checkpoint timing, feature mathematics, replay reconstruction,
+independent windows, CSV ordering, failure preservation, and changes to future
+candles. Full historical processing is a separate verification run, not part of
+each ordinary pytest invocation.
+
+### Verified local batch (2026-10-23)
+
+The full configured dataset retained **29,567** candles and produced **29,311**
+feature rows, covering **60,028,928** transitions. Each row has one UTC timestamp
+and 60 numeric features. Every timestamp matches its completed-candle decision
+time, from **2021-10-18 04:00 UTC** through **2026-10-01 00:00 UTC**.
+There are **zero** missing values, nonfinite features, duplicate timestamps,
+or failed simulations. Source SHA-256 remains unchanged.
+
+Full end-to-end processing took **23.378 seconds**, with **101.574 MiB** peak
+process working set, measured through Windows GetProcessMemoryInfo. Environment:
+Windows 11 build 26200, local Python 3.13.11, NumPy 2.5.4, pandas 3.1.0. A separate
+100-grid simulation/feature sample took **0.0654 seconds** after loading, and
+reproduced the corresponding CSV rows exactly. The earlier 100-window CLI run,
+including data loading and validation, took **3.093 seconds**. No extra dependency
+or parallel processing was needed.
+
+All **131 pytest tests** and Ruff pass. The Topic 2 CLI remains functional;
+Streamlit passes AppTest and starts with HTTP 200 / health=ok. Local
+`results/topic3_validation.json` records full-data checks and measurements.
+No predictive value or trading performance has been tested. Topic 4 design
+can begin; its labels, execution rules, and costs remain open decisions.
 
 ## Disclaimer
 

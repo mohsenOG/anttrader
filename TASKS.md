@@ -56,10 +56,52 @@ Topic 2 is complete. No manual data-acquisition or verification step remains.
   local results/topic2_validation.json report. A fresh clone needs its own CSV;
   the optional real-data test skips when that local dataset is absent.
 - The missing-CSV message remains tested. Dependencies and infrastructure are
-  unchanged. Topic 3 design can begin; no ant or trading logic was implemented.
+  unchanged. At Topic 2 completion, no ant or trading logic was implemented.
+
+## Topic 3: Langton's Ant Simulation & Feature Extraction
+
+- [x] Document approved simulation specification.
+- [x] Update simulation configuration.
+- [x] Implement Langton's Ant movement rules.
+- [x] Implement toroidal boundaries.
+- [x] Implement simulation checkpoints.
+- [x] Track movement and visited cells.
+- [x] Implement behavioral feature extraction.
+- [x] Implement historical batch simulation.
+- [x] Export historical features to CSV.
+- [x] Implement optional trajectory recording.
+- [x] Add automated tests.
+- [x] Benchmark full-dataset performance.
+- [x] Integrate with existing pipeline.
+- [x] Update README.
+- [x] Verify and commit changes.
+
+### Topic 3 verification (2026-10-23)
+
+- Local Python 3.13.11: 131 pytest tests pass; Ruff and git diff --check pass.
+- Approved rules verified: one ant, binary 16 x 16 grid, start (15, 0) North,
+  READ -> TURN -> FLIP -> MOVE, 0=right, 1=left, toroidal wrapping, 2,048 steps,
+  checkpoints after 256/512/1,024/2,048 transitions. Independent hand-calculated
+  trajectory, all four edges, cumulative visits, and replay reconstruction pass.
+- Full source history processed: 29,567 retained candles, 29,311 independent
+  simulations/CSV rows, 60,028,928 transitions, 60 feature columns. All decision
+  timestamps match completed-candle windows and are strictly chronological.
+  Zero missing/nonfinite values, duplicate timestamps, or simulation failures.
+- Full CLI wall time: 23.378 seconds. Peak process working set: 101.574 MiB,
+  measured with Windows GetProcessMemoryInfo. Windows 11 build 26200,
+  Python 3.13.11, NumPy 2.5.4, pandas 3.1.0. A separate 100-grid sample after
+  loading took 0.0654 seconds and reproduced CSV output exactly; the initial
+  100-window CLI run including loading took 3.093 seconds.
+- Source SHA-256 is unchanged. Input grids remain unchanged. Future-candle
+  changes do not change earlier features. Generated CSV, metadata, and
+  results/topic3_validation.json remain local and ignored by Git.
+- Topic 2 CLI still produces all 29,311 grids. Streamlit passes AppTest and
+  launches with HTTP 200 / health=ok. No new dependencies or infrastructure.
+- Topic 4 design can begin. No labels, signals, backtesting, profitability
+  findings, or interactive dashboard animation were added. No manual data step
+  or implementation blocker remains.
 
 ## Future topics
 
-- [ ] Ant simulation and feature extraction.
 - [ ] Signal decoder and backtester.
 - [ ] Dashboard and integration.

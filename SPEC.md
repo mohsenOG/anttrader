@@ -5,21 +5,21 @@
 Investigate whether Langton's Ant can provide predictive information for spot
 gold (XAU/USD) on the 1-hour timeframe. This is historical research only.
 Profitability is unknown. Topic 1 provides the foundation. Topic 2 implements
-historical market data and grid encoding. Simulation, features, signals,
-backtesting, and a full dashboard remain pending.
+historical market data and grid encoding. Topic 3 adds ant simulation and
+behavioral features. Signals, backtesting, and a full dashboard remain pending.
 
 ## Technology and structure
 
 Use Python 3.13 and the local .venv. Existing dependencies are NumPy, pandas,
 scikit-learn, Streamlit, Plotly, and PyYAML; local checks use pytest and Ruff.
-Packaging uses pyproject.toml. No new dependency is required for Topic 2.
+Packaging uses pyproject.toml. No new dependency is required for Topics 2 and 3.
 Use one Codex agent. The existing public GitHub repository is mohsenOG/anttrader.
 No license, CI/CD, Docker, database, broker connection, or live trading is added.
 
 Historical candles -> data -> grid -> simulation -> features -> decoder -> backtest
 
-`anttrader.pipeline` demonstrates data-to-grid integration. `app.py` remains a
-Streamlit scaffold. Configuration is file-based in `config.yaml`. Local history
+`anttrader.pipeline` supports data-to-grid and historical feature generation.
+`app.py` remains a Streamlit scaffold. Configuration is file-based in `config.yaml`. Local history
 belongs in `data/` and generated outputs in `results/`; both are ignored by Git.
 
 ## Topic 2: approved market data
@@ -106,15 +106,97 @@ Confirmed Topic 2 settings are XAU/USD, 1H, Dukascopy, local CSV, UTC opening
 timestamps, bid OHLC, 256 returns, a 16 x 16 grid, binary log-return sign encoding,
 and serpentine layout. They drive the data-to-grid pipeline.
 
-Preserve provisional future defaults: one ant, 2,048 simulation steps, toroidal
-boundaries, logistic regression, and a four-bar prediction horizon. These values
-are experimental starting points; Topic 2 does not implement or finalize them.
+Topic 3 finalizes the simulation rules below. Logistic regression and a four-bar
+prediction horizon remain provisional Topic 4 defaults.
 
 Open decisions remain:
 
-- Topic 3: ant initial state, cell rules, simulation conventions, and features.
 - Topic 4: labels, chronological splits, training, BUY/SELL/HOLD rules, execution
   timing, positions, spread, slippage, and other costs.
 - Topic 5: dashboard controls, charts, and final integration workflows.
 
 No missing trading rule or scientific assumption is implied by a placeholder.
+
+## Topic 3: approved ant simulation
+
+Each historical binary 16 x 16 grid runs one independent ant. Copy the input;
+reset grid, ant, and counters for each window. Start at row 15, column 0, heading
+North. Directions use clockwise integer codes: North=0, East=1, South=2, West=3.
+North decreases row; East increases column; South increases row; West decreases
+column. There is no randomness or market-dependent movement rule.
+
+Each transition is READ -> TURN -> FLIP -> MOVE. A white cell (0) turns right
+90 degrees and becomes 1; a black cell (1) turns left 90 degrees and becomes 0.
+Move one cell along the new heading. Wrap with row/column modulo 16 (toroidal).
+Maintain unwrapped displacement separately: x increases east, y increases south;
+wrapping never adds a discontinuity to these displacements.
+
+Run 2,048 transitions continuously. Save independent checkpoint snapshots after
+256, 512, 1,024, and 2,048 completed transitions. A cell is visited when READ at
+the start of a transition, not on arrival. At step S, visit counts sum to S.
+The endpoint has not yet been read unless visited on an earlier transition.
+Keep the initial grid, checkpoint grids and visit counts, turn counts, wrapped
+pose, and unwrapped displacement. Do not restart at intermediate checkpoints.
+
+Configuration uses simulation.steps, start_row, start_col, initial_direction,
+boundary, checkpoints, ants, and reset_each_window. Reject nonpositive/noninteger
+lengths, invalid headings or starts, unordered/duplicate/out-of-range checkpoints,
+and a final checkpoint different from steps. Only 16 x 16, one ant, toroidal,
+and reset_each_window=true are supported. The reusable simulator permits valid
+shorter runs and other starting poses for testing/replay; config.yaml records
+the approved historical experiment. No settings are tuned against returns.
+
+## Topic 3: deterministic behavioral features
+
+At checkpoint S, let V_i be cell read counts, U the number of nonzero V_i,
+R the right-turn count, B the number of black cells, D the number of cells
+which differ from the initial grid, and p_i=V_i/S. There are M=256 cells.
+Export these 15 numeric columns per checkpoint, in this order:
+
+| Suffix | Definition |
+| --- | --- |
+| final_row | Wrapped row, 0..15 |
+| final_col | Wrapped column, 0..15 |
+| heading_north | 1 if heading is North, otherwise 0 |
+| heading_east | 1 if heading is East, otherwise 0 |
+| heading_south | 1 if heading is South, otherwise 0 |
+| heading_west | 1 if heading is West, otherwise 0 |
+| unique_cells_visited | U |
+| revisit_fraction | (S-U)/S |
+| horizontal_displacement | Net unwrapped movement east (+) / west (-) |
+| vertical_displacement | Net unwrapped movement south (+) / north (-) |
+| right_turn_fraction | R/S |
+| final_black_fraction | B/M |
+| changed_cell_fraction | D/M; repeated flips can restore a cell |
+| visit_entropy | -sum(p_i*ln(p_i))/ln(M), ignoring V_i=0 |
+| max_visit_concentration | max(V_i)/S |
+
+Prefix each suffix with s{S:04d}_, e.g. s0256_final_row. Human-readable headings
+remain available in checkpoint results. All numeric features must be finite;
+fractions and normalized entropy lie in [0,1] within floating-point tolerance.
+Do not add redundant left-turn fraction, weights, scaling, feature selection,
+future returns, labels, predictions, trading signals, or P&L in Topic 3.
+
+## Topic 3: historical export and replay
+
+Use the existing historical grid iterator. One grid produces exactly one CSV
+row at its UTC decision timestamp, strictly chronological and without duplicates.
+Only candles completed at that timestamp may affect that row. Never carry state
+between windows, mutate source grids/history, or skip a failed simulation.
+
+python -m anttrader.pipeline --stage features streams rows to the configured
+feature_output, default results/ant_features.csv. Columns are decision_timestamp
+then the 15 features for each ascending checkpoint (60 numeric columns total).
+--limit N optionally selects the first N eligible windows; default is all.
+Publish output only after the batch succeeds, so failures preserve an existing
+CSV. Reject output paths that overwrite the source CSV or configuration file.
+Write a small adjacent .metadata.json with source/config SHA-256, UTC as_of,
+configuration, counts, environment, and elapsed time for reproducibility.
+Generated outputs remain ignored by Git. The default data-to-grid command stays
+available. Signals, backtests, and dashboard animation remain pending.
+
+Batch mode stores no trajectory. Optional replay records (row, column,
+direction code) initially and after every move, plus the initial grid and
+configuration. For transition k, flip trajectory[k]'s cell, then move to
+trajectory[k+1]. This reconstructs every flip and the final grid without a full
+grid copy per step. Recording must not change checkpoints or features.
