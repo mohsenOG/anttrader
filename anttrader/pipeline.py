@@ -1,4 +1,4 @@
-"""Run configured historical XAU/USD grids or independent ant features."""
+"""Run configured historical XAU/USD grids, ant features, or the fixed backtest."""
 
 import argparse
 import csv
@@ -30,13 +30,13 @@ def main(
     stage: str = "grids",
     limit: int | None = None,
 ) -> None:
-    """Preserve the grid demonstration; optionally stream historical ant features."""
+    """Run the grid demonstration, feature export, or historical backtest."""
     config_path = Path(config_path)
     started = perf_counter()
     as_of = pd.Timestamp.now(tz="UTC")
     try:
-        if stage not in ("grids", "features"):
-            raise ValueError("stage must be grids or features.")
+        if stage not in ("grids", "features", "backtest"):
+            raise ValueError("stage must be grids, features, or backtest.")
         if limit is not None and (
             type(limit) is not int or limit < 1 or stage != "features"
         ):
@@ -67,7 +67,7 @@ def main(
             simulation = SimulationConfig(**config["simulation"])
         path = config_path.resolve().parent / config["historical_csv"]
         if not path.is_file():
-            if stage == "features":
+            if stage in ("features", "backtest"):
                 raise FileNotFoundError(
                     f"Historical CSV missing: {path}. See README.md."
                 )
@@ -103,6 +103,11 @@ def main(
                 started=started,
             )
             return
+        if stage == "backtest":
+            from anttrader.experiment import run_experiment
+
+            run_experiment(candles, config, config_path, path)
+            return
         latest = None
         count = 0
         for count, latest in enumerate(
@@ -120,7 +125,7 @@ def main(
         )
         print(latest.grid)
     except (ValueError, KeyError, TypeError, OSError, yaml.YAMLError) as exc:
-        label = "features" if stage == "features" else "data-to-grid"
+        label = stage if stage != "grids" else "data-to-grid"
         raise SystemExit(f"AntTrader {label} error: {exc}") from exc
 
 
@@ -234,7 +239,9 @@ def export_features(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("--stage", choices=("grids", "features"), default="grids")
+    parser.add_argument(
+        "--stage", choices=("grids", "features", "backtest"), default="grids"
+    )
     parser.add_argument("--limit", type=int, help="First N windows (features only).")
     args = parser.parse_args()
     main(args.config, stage=args.stage, limit=args.limit)

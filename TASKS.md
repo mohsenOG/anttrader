@@ -103,5 +103,63 @@ Topic 2 is complete. No manual data-acquisition or verification step remains.
 
 ## Future topics
 
-- [ ] Signal decoder and backtester.
+- [x] Signal decoder and backtester.
 - [ ] Dashboard and integration.
+
+## Topic 4: Signal Decoder & Backtesting
+
+- [x] Document approved decoder and trading rules.
+- [x] Update configuration.
+- [x] Validate feature and price-data alignment.
+- [x] Implement future-return targets.
+- [x] Implement chronological dataset splitting.
+- [x] Implement leakage-safe model training.
+- [x] Implement BUY/SELL/HOLD decoding.
+- [x] Implement historical trade simulation.
+- [x] Implement theoretical P&L calculations.
+- [x] Implement performance metrics.
+- [x] Implement benchmark strategies.
+- [x] Export experiment results.
+- [x] Add automated tests.
+- [x] Run full historical experiment.
+- [x] Update README.
+- [x] Verify implementation.
+- [ ] Commit and push verified changes.
+
+### Topic 4 verification (2026-10-23)
+
+- Python 3.13.11 in the local .venv: 162 pytest tests pass; Ruff passes.
+  Existing Topic 1-3 tests remain passing. git diff --check passes.
+- Complete unchanged source/feature history validated: 29,567 candles,
+  29,311 feature observations, 60 finite ant columns, exact UTC alignment,
+  matching source SHA-256 and simulation/encoding metadata. Partial exports,
+  invalid columns/timestamps, metadata mismatches, and input-overwrite paths
+  are rejected. Sixty sampled features reproduce across the entire period.
+- 22,914 valid four-hour labels; 6,393 forward-gap exclusions and four
+  unavailable final outcomes. Another 5,112 past-momentum gap exclusions and
+  four boundary purges leave 17,798 common eligible observations:
+  training 10,679, validation 3,558, test 3,561. Exact original/eligible dates
+  and counts are recorded in README.md and experiment metadata.
+- Both StandardScaler/logistic models fit the same training rows only and
+  remain frozen. Ant uses 60 features; raw input uses 256 original binary
+  states. Four-interval momentum uses five completed, consecutive closes.
+  All strategies use identical eligible dates, four-hour execution windows,
+  fixed one-ounce quantities, one position at a time, and zero costs.
+- Validation gross price-only P&L (USD): ant -211.655, momentum -387.864,
+  raw 372.207. Test: ant 161.969, momentum 1,475.739, raw -1,082.725.
+  Ant test accuracy/AUC: 51.81% / 0.52596; raw: 50.94% / 0.50495.
+  Ant test HOLD fraction: 77.42%. Ant underperforms momentum on test P&L.
+  Validation findings are weaker; no period sensitivity or real trading edge
+  is established. No parameters were tuned after observing test results.
+- Two complete historical reruns reproduce all five exports byte for byte.
+  Independent label, execution, position-state, equity, P&L, metric-count,
+  shared-date, and partition-cutoff checks pass. Exports contain 7,119 signal
+  rows, 4,526 trades across six strategy/partition combinations, and 4,532
+  equity rows including six zero baselines. Strict JSON contains no NaN/Inf
+  numeric values; undefined metrics are explicit nulls or infinity strings.
+- Streamlit passes AppTest and starts with HTTP 200 / health=ok. Its test
+  server was stopped. Local results/topic4_validation.json records hashes
+  and reconciliation checks; generated files remain ignored by Git.
+- README, SPEC, configuration, and scaffold status are updated. No simulation
+  or encoding change, new dependency, live trading, broker integration, or
+  full dashboard was added. Topic 5 can proceed after publication completes.

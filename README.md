@@ -5,8 +5,8 @@ timeframe. Profitability is unknown. This project uses historical data only.
 
 Implemented: project setup, validated CSV ingestion, binary log-return encoding,
 rolling serpentine grids, deterministic ant simulation, behavioral feature CSV
-export, optional replay recording, and a Streamlit scaffold.
-Pending: signals, backtesting, and the full dashboard.
+export, optional replay recording, frozen logistic decoders, comparable historical
+backtests, and a Streamlit scaffold. Pending: the full dashboard.
 
 ## Installation
 
@@ -23,7 +23,7 @@ py -3.13 -m venv .venv
 Activation is optional. Use `.venv\Scripts\python.exe` instead of `python` and
 `.venv\Scripts\ruff.exe` instead of `ruff` if PowerShell blocks activation.
 No global execution-policy change is required. Configuration is in `config.yaml`.
-No additional dependencies or services are needed for Topics 2 and 3.
+No additional dependencies or services are needed for Topics 2, 3, and 4.
 
 ## Market data
 
@@ -193,7 +193,7 @@ the candle count, date range, validation report, number of historical grids, and
 latest grid with its decision time and window. If the CSV is absent, it prints
 setup instructions. It never supplies fake history. The Streamlit application
 shows project status. Run the feature command separately; dashboard animation
-and trading logic remain pending.
+remains pending. Historical trading research uses the backtest command below.
 
 Unit tests use small **synthetic** inputs in temporary directories. They validate OHLC,
 timezones, completion times, gaps, sign encoding, layout, rolling alignment, and
@@ -203,8 +203,7 @@ on genuine source data. It uses the explicit 2026-10-01 UTC cutoff for this samp
 
 Read [SPEC.md](SPEC.md) for approved rules and open decisions, [TASKS.md](TASKS.md)
 for verified progress, and [AGENTS.md](AGENTS.md) for agent instructions.
-`config.yaml` contains the approved simulation settings. Logistic regression
-and a four-bar prediction horizon remain provisional Topic 4 defaults.
+`config.yaml` contains the approved simulation, decoder, and backtest settings.
 
 ## Ant simulation and behavioral features
 
@@ -317,10 +316,181 @@ or parallel processing was needed.
 All **131 pytest tests** and Ruff pass. The Topic 2 CLI remains functional;
 Streamlit passes AppTest and starts with HTTP 200 / health=ok. Local
 `results/topic3_validation.json` records full-data checks and measurements.
-No predictive value or trading performance has been tested. Topic 4 design
-can begin; its labels, execution rules, and costs remain open decisions.
+This Topic 3 verification did not evaluate predictive value or trading performance.
+The separate Topic 4 experiment below implements the approved trading rules.
+
+## Signal decoder and historical backtest
+
+```powershell
+python -m anttrader.pipeline --stage backtest
+```
+
+This command requires the complete configured market CSV and Topic 3 export.
+If features are missing, regenerate them with
+`python -m anttrader.pipeline --stage features` **without `--limit`**. A partial
+export is rejected, even when its metadata declares a limit equal to the full
+row count. There is no partial-history backtest mode. Restore the source CSV
+using the Market data steps above if it is missing; never substitute fake prices.
+
+The loader checks source SHA-256, market/encoding and simulation metadata,
+expected row count, exact UTC decision timestamps, stable feature columns,
+and finite numeric values. Only feature-producing configuration is compared
+with Topic 3 metadata: adding Topic 4 configuration does not invalidate features.
+Changing history or the simulation requires a new complete feature export.
+
+AntTrader uses all **60 ant features** listed above, without feature selection.
+A scikit-learn pipeline fits **StandardScaler + LogisticRegression** on training
+rows only. Logistic regression uses ordinary L2 regularization, `C=1`, `lbfgs`,
+`max_iter=1000`, and `random_state=42`. The second logistic model uses only the
+**256 original chronological binary return states**, with the same training
+rows and settings. It does not run the ant. Both models remain frozen during
+validation and test. No tuning, calibration, or validation refit is performed.
+Estimated probabilities are not established calibrated real-world probabilities
+and do not directly estimate expected profit.
+
+### Labels, partitions, and signals
+
+At decision **D**, the candle opening at **D-1h** has just completed. The
+idealized entry is the next candle's **bid opening price at D**. Exit uses the
+bid opening price at **D+4h**. Every hourly timestamp from D-1h through D+4h
+must exist. Missing entry, intermediate, or exit hours exclude the observation;
+weekends and session gaps cannot become continuous four-hour trades. No prices
+are interpolated. Entry assumes zero processing and execution latency at the
+hourly boundary. This is a theoretical reference-price convention.
+
+`future_return = ln(exit_open / entry_open)`. The label is **1** when positive,
+otherwise **0**. Future prices and labels never enter the input features.
+
+Split all feature rows chronologically before exclusions: first 60% training,
+next 20% validation, final 20% test. Boundaries use floor(0.60*N) and
+floor(0.80*N). Training and validation outcomes must end **strictly before**
+the next partition's first decision. Purge crossing labels. Test exits must be
+available in the historical source. Validation and test are reported separately.
+
+- **BUY:** p_up >= 0.55.
+- **SELL:** p_up <= 0.45.
+- **HOLD:** 0.45 < p_up < 0.55.
+
+Momentum uses four completed consecutive hourly close-to-close intervals
+(**five completed closes**). Positive momentum means BUY, negative means SELL,
+and exactly zero means HOLD. A missing historical hour makes momentum invalid.
+All three approaches use the intersection of valid labels, valid momentum
+windows, and protected partition dates. They use identical execution rules.
+
+### Positions, P&L, and metrics
+
+Each strategy starts flat in each evaluation partition. A BUY opens a long;
+a SELL opens a short; HOLD opens nothing. Hold exactly four consecutive hours,
+with at most one position open. Ignore new signals while open, but retain
+predictions in signal history. Reentry is allowed at the preceding exit opening.
+Do not enter without an available full exit. Quantity is fixed at one troy ounce;
+there is no compounding, stop-loss, take-profit, leverage, or live execution.
+
+`gross_pnl_usd = direction * (exit_open - entry_open) * quantity_ounces`, where
+long direction is +1 and short is -1. Both sides use bid opening prices as the
+same theoretical reference. **All reported P&L is gross price-only simulated
+P&L.** There is no spread, synthetic spread, slippage, commission, swap, or
+financing. These results are theoretical price-only backtests, not executable
+net returns.
+
+Trading metrics include completed/BUY/SELL trade counts, total and average
+gross P&L, win rate, gross profit, gross loss (positive magnitude), profit
+factor, maximum realized-equity drawdown, and long/short P&L. Equity starts at
+zero and accumulates only completed trades. Drawdown includes the initial zero
+baseline; it does not measure intratrade losses. No-trade win rate, average
+P&L, and profit factor are undefined. Profit factor without losses is
+`"infinity"` when profit exists, otherwise null; associated notes explain why.
+
+Predictive metrics include observation counts, BUY/SELL/HOLD counts/fractions,
+directional accuracy, and ROC AUC. Logistic accuracy uses p_up >= 0.5 across
+all eligible observations, including HOLD predictions. Momentum accuracy uses
+non-HOLD observations. Momentum has no probability/AUC. A single-class target
+has undefined ROC AUC. Undefined JSON metrics use null with a reason, never NaN.
+
+### Outputs
+
+Paths are configured in `config.yaml` and resolved relative to that file:
+
+| File | Content |
+| --- | --- |
+| results/signals.csv | Validation/test decision, partition, target, execution prices, both model probabilities/signals, momentum signal |
+| results/trades.csv | Strategy/partition, decision, signal/probability, entry/exit times and prices, direction, quantity, duration, gross P&L |
+| results/equity.csv | Strategy/partition, initial zero, completed-trade timestamp and cumulative gross P&L |
+| results/metrics.json | Separate validation/test predictive and trading metrics for all three strategies |
+| results/experiment.metadata.json | Source/feature/config identities and hashes, simulation, model settings, columns, dates/counts, exclusions, assumptions, library versions |
+
+Momentum trade probability is empty because this strategy has no probability
+estimate. Signals include all eligible predictions, including those ignored
+while a position is open. Generated outputs remain local and excluded from Git.
+Identical source files, configuration, feature metadata, and library versions
+produce byte-identical exports. Re-running replaces these result files.
+Output paths must be distinct and must not overwrite source, features, their
+metadata, or configuration. The Streamlit app remains a status scaffold;
+interactive charts, replay animation, and the full dashboard remain Topic 5.
+
+### Verified full historical experiment (2026-10-23)
+
+The source has **29,567 retained candles** and **29,311 feature observations**.
+There are **22,914 valid four-hour labels**. Exclusions are **6,393** forward
+market-gap observations, **4** unavailable final outcomes, **5,112** additional
+past-momentum gap observations, and **4** boundary rows after intersection.
+The shared dataset contains **17,798 observations**. Prediction horizon and
+holding period are both **four consecutive hourly bars**; quantity is one ounce.
+
+All dates below are UTC. Original partition boundaries are fixed before filtering:
+
+| Partition | Original rows | Original first decision | Original last decision |
+| --- | ---: | --- | --- |
+| Training | 17,586 | 2021-10-18 04:00 | 2024-10-07 07:00 |
+| Validation | 5,862 | 2024-10-07 08:00 | 2025-10-03 02:00 |
+| Test | 5,863 | 2025-10-03 03:00 | 2026-10-01 00:00 |
+
+| Partition | Eligible rows | First eligible decision | Last eligible decision | Last exit |
+| --- | ---: | --- | --- | --- |
+| Training | 10,679 | 2021-10-18 04:00 | 2024-10-07 03:00 | 2024-10-07 07:00 |
+| Validation | 3,558 | 2024-10-07 08:00 | 2025-10-02 16:00 | 2025-10-02 20:00 |
+| Test | 3,561 | 2025-10-03 03:00 | 2026-09-30 16:00 | 2026-09-30 20:00 |
+
+| Partition / strategy | BUY | SELL | HOLD | Directional accuracy | ROC AUC |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Validation / AntTrader | 469 | 171 | 2,918 | 50.70% | 0.49833 |
+| Validation / Momentum | 1,909 | 1,645 | 4 | 50.56% | Undefined |
+| Validation / Raw input | 1,108 | 907 | 1,543 | 52.25% | 0.52220 |
+| Test / AntTrader | 507 | 297 | 2,757 | 51.81% | 0.52596 |
+| Test / Momentum | 1,828 | 1,733 | 0 | 48.72% | Undefined |
+| Test / Raw input | 1,078 | 1,000 | 1,483 | 50.94% | 0.50495 |
+
+Test-period results, **gross price-only simulated P&L**, with all costs zero:
+
+| Metric | AntTrader | Momentum | Raw-input model |
+| --- | ---: | ---: | ---: |
+| Completed trades | 465 | 1,015 | 809 |
+| Win rate | 54.84% | 49.75% | 50.68% |
+| Total gross P&L (USD) | 161.969 | 1,475.739 | -1,082.725 |
+| Average gross P&L/trade (USD) | 0.348 | 1.454 | -1.338 |
+| Profit factor | 1.02981 | 1.14538 | 0.88637 |
+| Maximum realized drawdown (USD) | 718.317 | 734.926 | 1,512.654 |
+
+Validation gross P&L: AntTrader **-211.655 USD**, momentum **-387.864 USD**,
+raw input **372.207 USD**. AntTrader's test accuracy/AUC exceed raw input,
+but its validation accuracy/AUC are lower. AntTrader's test gross P&L is
+positive and below momentum. HOLD occurs in **82.01%** of validation and
+**77.42%** of test observations. These findings do not establish a reliable
+market edge. Performance differs between validation and test; sensitivity to
+other split periods has not been tested. No alternative periods or parameters
+were selected to improve results. Zero costs, idealized latency, uncalibrated
+probabilities, overlapping predictive labels, one historical source, and one
+fixed split prevent claims of real trading profitability.
+
+Verification: **162 pytest tests pass** and **Ruff passes** in local Python
+3.13.11. Two complete reruns reproduce all five exports byte for byte.
+Independent execution/label/equity reconciliation passes; 60 sampled ant
+windows reproduce the saved features across the full period. Streamlit passes
+AppTest and starts with HTTP 200 / health=ok. Source and feature files remain
+unchanged. Local `results/topic4_validation.json` records the verification and
+output hashes. No manual input or external-data blocker remains.
 
 ## Disclaimer
 
-This is experimental research, not financial advice. No profitable strategy or
-verified performance result is claimed. No license is granted yet.
+This is experimental research, not financial advice. Historical gross price-only
+results do not establish future profitability. No license is granted yet.

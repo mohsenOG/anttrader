@@ -6,7 +6,7 @@ Investigate whether Langton's Ant can provide predictive information for spot
 gold (XAU/USD) on the 1-hour timeframe. This is historical research only.
 Profitability is unknown. Topic 1 provides the foundation. Topic 2 implements
 historical market data and grid encoding. Topic 3 adds ant simulation and
-behavioral features. Signals, backtesting, and a full dashboard remain pending.
+behavioral features. Topic 4 adds historical signals and backtesting. A full dashboard remains pending.
 
 ## Technology and structure
 
@@ -106,13 +106,10 @@ Confirmed Topic 2 settings are XAU/USD, 1H, Dukascopy, local CSV, UTC opening
 timestamps, bid OHLC, 256 returns, a 16 x 16 grid, binary log-return sign encoding,
 and serpentine layout. They drive the data-to-grid pipeline.
 
-Topic 3 finalizes the simulation rules below. Logistic regression and a four-bar
-prediction horizon remain provisional Topic 4 defaults.
+Topics 3 and 4 finalize the simulation and historical research rules below.
 
 Open decisions remain:
 
-- Topic 4: labels, chronological splits, training, BUY/SELL/HOLD rules, execution
-  timing, positions, spread, slippage, and other costs.
 - Topic 5: dashboard controls, charts, and final integration workflows.
 
 No missing trading rule or scientific assumption is implied by a placeholder.
@@ -193,10 +190,72 @@ CSV. Reject output paths that overwrite the source CSV or configuration file.
 Write a small adjacent .metadata.json with source/config SHA-256, UTC as_of,
 configuration, counts, environment, and elapsed time for reproducibility.
 Generated outputs remain ignored by Git. The default data-to-grid command stays
-available. Signals, backtests, and dashboard animation remain pending.
+available. Dashboard animation remains pending.
 
 Batch mode stores no trajectory. Optional replay records (row, column,
 direction code) initially and after every move, plus the initial grid and
 configuration. For transition k, flip trajectory[k]'s cell, then move to
 trajectory[k+1]. This reconstructs every flip and the final grid without a full
 grid copy per step. Recording must not change checkpoints or features.
+
+## Topic 4: approved signal decoder and historical backtest
+
+- XAU/USD, one-hour Dukascopy bid candles; use the existing 60 ant features.
+- At decision D, the last observed candle opened at D-1h and has completed.
+  Entry is the next candle opening at D. Exit is the opening at D+4h.
+  Require every hourly opening from D-1h through D+4h. Exclude gaps and
+  unavailable exits; never interpolate prices. This is idealized zero-latency
+  execution at the hourly open, not a claim of executable prices.
+- Label ln(exit_open / entry_open) > 0 as 1, otherwise 0. No return filter.
+- StandardScaler then scikit-learn regularized LogisticRegression (L2,
+  C=1, lbfgs, max_iter=1000, random_state=42). Fit each scaler and model only
+  on training data. Freeze both models; no refitting, calibration, threshold
+  optimization, feature selection, or test-set tuning.
+- BUY if p_up >= 0.55; SELL if p_up <= 0.45; HOLD strictly between.
+  Probabilities are uncalibrated model estimates, not expected profit.
+- Split all feature rows chronologically before filtering: floor(0.60*N)
+  training rows, then through floor(0.80*N) validation rows, then test rows.
+  Purge training/validation rows with exit >= the next partition's first
+  decision. This conservative exclusive cutoff prevents boundary contamination.
+  Report original boundaries, retained dates/counts, and exclusion counts.
+- Require the complete Topic 3 export and metadata, exact UTC timestamps,
+  finite ordered feature columns, source SHA-256, matching market/encoding/
+  simulation settings, and every expected feature timestamp. Partial exports
+  are rejected. No approximate timestamp joins.
+- Compare AntTrader, four-interval close momentum, and raw-input logistic
+  regression on the same eligible observations and partitions. Momentum uses
+  five completed closes, with four consecutive hourly close-to-close returns;
+  positive = BUY, negative = SELL, zero = HOLD. Exclude momentum windows with
+  gaps for all strategies. Raw inputs are the original 256 chronological
+  binary return states from Topic 2, without running the ant again. Use the
+  same labels, scaling/model settings, thresholds, and execution rules.
+- One fixed troy ounce, maximum one open position per strategy and partition.
+  Ignore signals while open; retain all predictions. Close after four hours;
+  a new position may enter at the prior exit opening. No stop-loss,
+  take-profit, compounding, leverage, broker integration, or live trading.
+- Gross P&L = direction * (exit_open - entry_open) * quantity, with long +1
+  and short -1. Both directions use the same bid opening reference price.
+  All costs are zero: no spread, synthetic spread, slippage, commission,
+  swap, or financing. Report **gross price-only simulated P&L**, never net
+  broker profits. Realistic transaction costs remain future work.
+- Equity is cumulative realized trade P&L, initially zero. Maximum drawdown
+  includes that initial zero and measures completed-trade equity only.
+  Trading metrics: trade/side counts, total/average P&L, win rate, gross
+  profit, gross loss (positive loss magnitude), profit factor, realized
+  drawdown, and side P&L. No trades gives undefined win rate/average/profit
+  factor. Positive profit without losses gives infinite profit factor.
+- Predictive metrics: accuracy (p_up >= 0.5), ROC AUC when both classes
+  exist, observation counts, and BUY/SELL/HOLD counts and fractions.
+  Momentum has no probability or ROC AUC; its directional accuracy uses
+  non-HOLD signals. Undefined metrics are JSON null with a reason; infinite
+  profit factor is the JSON string "infinity". No nonstandard JSON NaN values.
+- Report validation and test separately. Export signals.csv, trades.csv,
+  equity.csv, metrics.json, and experiment.metadata.json under results/.
+  Include strategy and partition in trades/equity, an initial equity baseline
+  per partition/strategy, identities and hashes, versions, model settings,
+  boundaries, exclusions, timing and zero-cost assumptions in metadata.
+  Generated data stays excluded from Git. Run with
+  python -m anttrader.pipeline --stage backtest.
+- One fixed chronological experiment cannot establish sensitivity to other
+  periods, proven predictability, or future profitability. Report results
+  without selecting parameters to improve performance.
