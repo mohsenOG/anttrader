@@ -57,7 +57,14 @@ def test_pipeline_reports_invalid_config(tmp_path):
 
 
 def test_dashboard_renders_status():
-    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py").run()
+    app = AppTest.from_file(
+        Path(__file__).resolve().parents[1] / "app.py", default_timeout=30
+    ).run()
     assert not app.exception
     assert app.title[0].value == "AntTrader"
-    assert "Topic 2 data loading and grid encoding" in app.info[0].value
+    assert [tab.label for tab in app.tabs] == [
+        "Ant Simulation",
+        "Gold & Signals",
+        "Backtest & Comparison",
+    ]
+    assert "theoretical price-only performance" in app.warning[0].value

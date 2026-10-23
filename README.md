@@ -6,7 +6,14 @@ timeframe. Profitability is unknown. This project uses historical data only.
 Implemented: project setup, validated CSV ingestion, binary log-return encoding,
 rolling serpentine grids, deterministic ant simulation, behavioral feature CSV
 export, optional replay recording, frozen logistic decoders, comparable historical
-backtests, and a Streamlit scaffold. Pending: the full dashboard.
+backtests, and a three-tab Streamlit dashboard.
+
+The ant is a deterministic transformation of a binary market grid. The research
+compares its behavioral features with momentum and the original binary inputs;
+complex ant behavior alone does not imply useful market predictions.
+
+Market data -> Grid encoding -> Ant simulation -> Feature extraction ->
+Signal decoder -> Backtester -> Streamlit dashboard.
 
 ## Installation
 
@@ -23,7 +30,64 @@ py -3.13 -m venv .venv
 Activation is optional. Use `.venv\Scripts\python.exe` instead of `python` and
 `.venv\Scripts\ruff.exe` instead of `ruff` if PowerShell blocks activation.
 No global execution-policy change is required. Configuration is in `config.yaml`.
-No additional dependencies or services are needed for Topics 2, 3, and 4.
+No additional dependencies or services are needed for the dashboard.
+
+## Run the local application
+
+Prepare the Dukascopy CSV as described below, then run these commands from the
+repository root with the virtual environment active:
+
+```powershell
+python -m anttrader.pipeline
+python -m anttrader.pipeline --stage features
+python -m anttrader.pipeline --stage backtest
+streamlit run app.py
+```
+
+The first command checks candles and grid encoding. Feature generation must
+cover the full dataset: do not use --limit for a research run. Open the local
+URL printed by Streamlit. Configuration and output paths come from config.yaml;
+paths are resolved relative to that file. Datasets and generated research
+results remain local and are excluded from Git.
+
+## Dashboard
+
+- **Ant Simulation:** select a saved feature timestamp. Compare its original
+  market grid with the recorded ant replay from step 0 through 2,048. Jump to a
+  checkpoint and inspect current pose, read counts, turn/cell fractions, entropy,
+  and unwrapped displacement. Saved checkpoint features must match the selected
+  simulation. An associated prediction appears only if it exists in signals.csv.
+- **Gold & Signals:** inspect historical bid candlesticks, BUY/SELL predictions,
+  executed entries, and completed exits. Select a partition, displayed strategy,
+  and UTC date range. The initial range covers the recent month of that
+  partition. Sort the trade and signal tables by clicking their headers.
+  HOLD observations remain in the table. Future targets are retrospective
+  outcomes, never model inputs. Latest Historical Signal refers to the last
+  saved AntTrader prediction.
+- **Backtest & Comparison:** select Test (default) or Validation. Compare saved
+  metrics and realized gross-P&L curves for AntTrader, Momentum, and raw-input
+  logistic regression. Undefined metrics include explanatory notes; profit
+  factor can be infinite. Partitions are never combined.
+
+Research settings are read-only. The dashboard never downloads data, generates
+features, trains models, or reruns trading simulations. It caches validated
+inputs and up to eight selected replay runs, using file identities to invalidate
+changed results. It reconstructs only the selected ant window.
+
+If a file is missing or incompatible, the app shows the path or validation error
+and the recovery commands. Restore the configured market CSV when needed, run
+the complete feature stage, then run the backtest stage. Never substitute dummy
+files or edit exported results to bypass validation. For older metadata without
+result hashes, rerun the backtest stage. Stop any running pipeline before
+loading a result bundle.
+
+## Limitations
+
+Historical research only. There is no live market feed, broker connection, or
+order execution. P&L uses idealized bid reference prices with zero spread,
+slippage, commission, financing, and execution latency. Results depend on the
+provided dataset and fixed chronological split. Positive historical gross P&L
+does not establish a market edge or guarantee future profitability.
 
 ## Market data
 
@@ -192,8 +256,8 @@ The pipeline resolves the CSV path relative to the configuration file. It prints
 the candle count, date range, validation report, number of historical grids, and
 latest grid with its decision time and window. If the CSV is absent, it prints
 setup instructions. It never supplies fake history. The Streamlit application
-shows project status. Run the feature command separately; dashboard animation
-remains pending. Historical trading research uses the backtest command below.
+loads saved research results. Generate features and backtests separately;
+missing inputs produce file-specific errors and recovery commands.
 
 Unit tests use small **synthetic** inputs in temporary directories. They validate OHLC,
 timezones, completion times, gaps, sign encoding, layout, rolling alignment, and
@@ -425,8 +489,11 @@ while a position is open. Generated outputs remain local and excluded from Git.
 Identical source files, configuration, feature metadata, and library versions
 produce byte-identical exports. Re-running replaces these result files.
 Output paths must be distinct and must not overwrite source, features, their
-metadata, or configuration. The Streamlit app remains a status scaffold;
-interactive charts, replay animation, and the full dashboard remain Topic 5.
+metadata, or configuration. The dashboard reads these saved outputs without
+training models or generating
+predictions. Experiment metadata also includes SHA-256 hashes for all four
+result files. After upgrading from Topic 4, run the backtest command once to
+generate this manifest. Mixed, modified, or stale result files are rejected.
 
 ### Verified full historical experiment (2026-10-23)
 
@@ -489,6 +556,26 @@ windows reproduce the saved features across the full period. Streamlit passes
 AppTest and starts with HTTP 200 / health=ok. Source and feature files remain
 unchanged. Local `results/topic4_validation.json` records the verification and
 output hashes. No manual input or external-data blocker remains.
+
+## Topic 5 integration verification (2026-10-23)
+
+Local Python 3.13.11 passes **203 pytest tests**, Ruff, and git diff --check.
+A fresh virtual environment installs .[dev], passes pip check, all 203 tests,
+and Ruff. Automated checks cover malformed/missing/stale inputs, duplicate and
+UTC timestamps, replay parity, prediction/trade markers, empty trade files,
+metric reconciliation, partition filters, and Streamlit controls.
+
+Full-data verification loads all saved research outputs, reproduces 60
+historical replay windows and 100 feature-CLI sample rows, and reproduces two
+complete backtest reruns byte for byte. The source, features, and all four
+Topic 4 result files are unchanged. Only metadata adds result hashes.
+
+Headless Chromium exercises the three tabs, timestamp selection, replay slider
+and checkpoints, strategy/partition controls, and charts. Screenshots were
+inspected. Test and validation equity values reconcile with saved metrics;
+no browser JavaScript errors occurred. Streamlit startup returns HTTP 200 and
+health=ok. Local evidence remains in results/topic5_validation.json and
+results/topic5_browser_validation.json. No verification blocker remains.
 
 ## Disclaimer
 

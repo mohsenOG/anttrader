@@ -1,13 +1,312 @@
-"""Streamlit scaffold for the future AntTrader research dashboard."""
+"""Local, read-only AntTrader research dashboard."""
 
+from pathlib import Path
+
+import pandas as pd
 import streamlit as st
+import yaml
 
-st.set_page_config(page_title="AntTrader")
-st.title("AntTrader")
-st.write("Historical XAU/USD research on the 1-hour timeframe.")
-st.info(
-    "Topic 2 data loading and grid encoding are available through "
-    "python -m anttrader.pipeline. Topic 3 ant simulation and features use "
-    "python -m anttrader.pipeline --stage features. Topic 4 signals and backtesting use "
-    "python -m anttrader.pipeline --stage backtest. The full dashboard remains pending."
+from anttrader.dashboard import (
+    DISCLAIMER,
+    RECOVERY,
+    STRATEGY_NAMES,
+    comparison_table,
+    equity_chart,
+    format_metric,
+    grid_chart,
+    input_signature,
+    load_research,
+    price_chart,
+    replay_state,
+    selected_simulation,
 )
+from anttrader.features import checkpoint_features
+from anttrader.pipeline import DEFAULT_CONFIG
+
+
+@st.cache_data(show_spinner=False, max_entries=2)
+def cached_research(config_path: str, signature: tuple):
+    return load_research(Path(config_path))
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def cached_simulation(_research, decision: str, signature: tuple):
+    return selected_simulation(_research, decision)
+
+
+def utc(value) -> str:
+    return pd.Timestamp(value).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def jump_to_checkpoint():
+    st.session_state["replay_step"] = st.session_state["checkpoint_step"]
+
+
+def main(config_path: Path = DEFAULT_CONFIG) -> None:
+    st.set_page_config(page_title="AntTrader", layout="wide")
+    st.title("AntTrader")
+    st.write("Langton's Ant Trading Research — XAU/USD 1H")
+    st.warning(DISCLAIMER)
+    status = st.empty()
+    tabs = st.tabs(["Ant Simulation", "Gold & Signals", "Backtest & Comparison"])
+    try:
+        signature = input_signature(config_path)
+        with st.spinner("Validating the saved research experiment..."):
+            research = cached_research(str(config_path.resolve()), signature)
+    except (ValueError, KeyError, TypeError, OSError, yaml.YAMLError) as exc:
+        st.error(str(exc))
+        st.info(RECOVERY)
+        st.stop()
+    metadata = research.metadata
+    status.caption(
+        f"Historical experiment loaded · {len(research.candles):,} candles · "
+        f"{len(research.features):,} feature windows · "
+        f"{len(research.signals):,} saved predictions · UTC · Read-only"
+    )
+    with st.expander("Experiment metadata and research configuration"):
+        st.write(
+            f"Candle openings: {utc(research.candles.timestamp.iloc[0])} to "
+            f"{utc(research.candles.timestamp.iloc[-1])}. "
+            f"Feature source cutoff: {utc(metadata['feature_source_cutoff'])}."
+        )
+        st.caption(f"Source SHA-256: {metadata['source_sha256']}")
+        st.caption(f"Configuration SHA-256: {metadata['config_sha256']}")
+        st.dataframe(pd.DataFrame(metadata["partitions"]).T, width="stretch")
+        st.json(
+            {
+                key: value
+                for key, value in metadata.items()
+                if key.startswith("excluded_")
+            }
+        )
+        st.json(research.config)
+        st.caption(
+            "Frozen training-only models. Probabilities are uncalibrated estimates. "
+            "Four-hour theoretical trades; fixed quantity; zero costs. "
+            "Realized equity does not measure intratrade losses. "
+            "One historical split cannot establish a reliable market edge."
+        )
+
+    with tabs[0]:
+        st.subheader("Explore a historical market grid")
+        decision = st.selectbox(
+            "Decision timestamp (UTC)",
+            research.features.decision_timestamp,
+            index=len(research.features) - 1,
+            format_func=utc,
+        )
+        try:
+            window, result = cached_simulation(
+                research, decision.isoformat(), signature
+            )
+        except (ValueError, TypeError, IndexError) as exc:
+            st.error(f"Cannot replay selected window: {exc}")
+        else:
+            st.caption(
+                f"Decision: {utc(decision)} · 257 completed candle openings: "
+                f"{utc(window.window_start)} to {utc(window.window_end)}"
+            )
+            st.caption(
+                f"16 × 16 binary grid · One ant · Start "
+                f"({result.config.start_row}, {result.config.start_col}) "
+                f"{result.config.initial_direction.title()} · Toroidal · "
+                f"{result.config.steps:,} steps · Checkpoint features match saved results"
+            )
+            st.selectbox(
+                "Jump to checkpoint",
+                [0, *result.config.checkpoints],
+                key="checkpoint_step",
+                on_change=jump_to_checkpoint,
+            )
+            step = st.slider(
+                "Replay step",
+                0,
+                result.config.steps,
+                key="replay_step",
+            )
+            state = replay_state(result, step)
+            left, right = st.columns(2)
+            left.plotly_chart(
+                grid_chart(result.initial_grid, None, "Original market grid"),
+                width="stretch",
+                key="initial_grid",
+            )
+            right.plotly_chart(
+                grid_chart(state.grid, state, f"Replay · Step {step:,}"),
+                width="stretch",
+                key="replay_grid",
+            )
+            st.caption(
+                "Light = 0 · Dark = 1 · Gold arrow = ant heading. "
+                "Rows increase downward. Visits count reads before moves."
+            )
+            features = checkpoint_features(state) if step else {}
+            values = {
+                "Step": f"{step:,}",
+                "Wrapped row / column": f"{state.row} / {state.col}",
+                "Heading": state.heading.title(),
+                "Unique cells visited": str(state.unique_cells_visited),
+                "Revisits": str(state.revisits),
+                "Right-turn fraction": format_metric(
+                    features.get("right_turn_fraction"), percent=True
+                ),
+                "Black-cell fraction": format_metric(
+                    state.black_cells / 256, percent=True
+                ),
+                "Changed-cell fraction": format_metric(
+                    state.changed_cells / 256, percent=True
+                ),
+                "Visit entropy": format_metric(features.get("visit_entropy")),
+                "Unwrapped displacement (x east, y south)": (
+                    f"{state.horizontal_displacement}, {state.vertical_displacement}"
+                ),
+            }
+            st.dataframe(
+                pd.DataFrame(values.items(), columns=["Replay statistic", "Value"]),
+                hide_index=True,
+                width="stretch",
+            )
+            if step == 0:
+                st.caption(
+                    "Right-turn fraction and visit entropy are undefined before the first read."
+                )
+            saved = research.signals.loc[
+                research.signals.decision_timestamp.eq(decision)
+            ]
+            if saved.empty:
+                st.info("No saved prediction exists for this decision timestamp.")
+            else:
+                row = saved.iloc[0]
+                st.info(
+                    f"Saved AntTrader signal: {row.ant_signal} · "
+                    f"P(up): {row.ant_p_up:.4f} · {row.partition.title()} · {utc(decision)}"
+                )
+
+    with tabs[1]:
+        st.subheader("Latest Historical Signal")
+        latest = research.signals.iloc[-1]
+        st.write(
+            f"**{latest.ant_signal}** · AntTrader P(up): **{latest.ant_p_up:.4f}** · "
+            f"{utc(latest.decision_timestamp)} · {latest.partition.title()}"
+        )
+        st.caption(
+            "Latest prediction across the saved experiment. Historical research only; "
+            "no live market feed or current market recommendation."
+        )
+        one, two = st.columns(2)
+        partition = one.selectbox(
+            "Price chart partition", ["Test", "Validation"], key="price_partition"
+        ).lower()
+        strategy = two.selectbox(
+            "Displayed strategy", list(STRATEGY_NAMES), format_func=STRATEGY_NAMES.get
+        )
+        signals = research.signals.loc[research.signals.partition.eq(partition)]
+        trades = research.trades.loc[
+            research.trades.partition.eq(partition)
+            & research.trades.strategy.eq(strategy)
+        ]
+        first = signals.decision_timestamp.iloc[0].date()
+        last = signals.exit_timestamp.iloc[-1].date()
+        default_start = max(first, last - pd.Timedelta(days=30))
+        dates = st.date_input(
+            "Chart date range (UTC)",
+            value=(default_start, last),
+            min_value=first,
+            max_value=last,
+            key=f"chart_dates_{partition}",
+        )
+        if len(dates) != 2:
+            st.info("Select both the start and end date.")
+        else:
+            start = pd.Timestamp(dates[0], tz="UTC")
+            stop = pd.Timestamp(dates[1], tz="UTC") + pd.Timedelta(days=1)
+            candles = research.candles.loc[
+                research.candles.timestamp.ge(start)
+                & research.candles.timestamp.lt(stop)
+            ]
+            visible_signals = signals.loc[
+                signals.decision_timestamp.ge(start)
+                & signals.decision_timestamp.lt(stop)
+            ]
+            visible_trades = trades.loc[
+                trades.entry_timestamp.lt(stop) & trades.exit_timestamp.ge(start)
+            ]
+            st.caption(
+                f"Active partition: {partition.title()} · {STRATEGY_NAMES[strategy]} · "
+                "Small triangles: predictions · Large diamonds: executed entries · Crosses: exits"
+            )
+            if candles.empty:
+                st.info("No historical candles exist in this date range.")
+            else:
+                st.plotly_chart(
+                    price_chart(
+                        candles, visible_signals, visible_trades, strategy, partition
+                    ),
+                    width="stretch",
+                    key="gold_chart",
+                )
+            st.subheader("Executed theoretical trades")
+            st.caption(
+                "Trades overlapping the date range. Prices and timestamps come from saved "
+                "trade records. Not every prediction becomes a trade."
+            )
+            st.dataframe(visible_trades, hide_index=True, width="stretch")
+            st.subheader("Signal history")
+            st.caption(
+                "All strategies, including HOLD. Click a column to sort. "
+                "target and future_return are retrospective outcomes, never model inputs. "
+                "target = 1 means a positive future return; target = 0 means zero or negative."
+            )
+            st.dataframe(visible_signals, hide_index=True, width="stretch")
+
+    with tabs[2]:
+        st.subheader("Backtest & Comparison")
+        partition = st.selectbox(
+            "Performance partition", ["Test", "Validation"], key="performance_partition"
+        ).lower()
+        st.caption(
+            f"Active partition: {partition.title()} · All P&L is gross price-only simulated USD"
+        )
+        result = research.metrics["partitions"][partition]["ant"]["trading"]
+        first, second, third = st.columns(3)
+        first.metric(
+            "AntTrader gross P&L (USD)", format_metric(result["total_gross_pnl_usd"])
+        )
+        second.metric(
+            "Completed AntTrader trades", format_metric(result["completed_trades"])
+        )
+        third.metric(
+            "AntTrader win rate", format_metric(result["win_rate"], percent=True)
+        )
+        st.dataframe(
+            comparison_table(research.metrics, partition), height=460, width="stretch"
+        )
+        st.plotly_chart(
+            equity_chart(research.equity, partition),
+            width="stretch",
+            key="equity_chart",
+        )
+        st.caption(
+            "Equity realizes P&L at completed exits and includes the initial zero baseline. "
+            "Final equity reconciles with the stored total gross P&L for every strategy. "
+            "Maximum drawdown excludes intratrade losses."
+        )
+        with st.expander("Metric definitions and undefined values"):
+            for strategy, name in STRATEGY_NAMES.items():
+                metrics = research.metrics["partitions"][partition][strategy]
+                predictive, trading = metrics["predictive"], metrics["trading"]
+                st.write(f"**{name}**: {predictive['accuracy_scope']}.")
+                for note in (
+                    predictive["roc_auc_note"],
+                    trading["profit_factor_note"],
+                    trading["undefined_note"],
+                ):
+                    if note:
+                        st.write(note)
+            st.caption(
+                "Undefined means the metric has no defined value. Infinity means profit with no gross losses."
+            )
+
+
+if __name__ == "__main__":
+    main()

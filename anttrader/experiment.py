@@ -200,6 +200,10 @@ def run_experiment(
     trades.to_csv(outputs[1], index=False, lineterminator="\n")
     equity.to_csv(outputs[2], index=False, lineterminator="\n")
     outputs[3].write_text(metrics_json, encoding="utf-8")
+    metadata["output_sha256"] = {
+        key: sha256(path) for key, path in zip(OUTPUT_KEYS[:-1], outputs[:-1], strict=True)
+    }
+    metadata_json = json.dumps(metadata, indent=2, allow_nan=False) + "\n"
     outputs[4].write_text(metadata_json, encoding="utf-8")
     print(
         f"Complete history: {len(features):,} feature rows; {int(eligible.sum()):,} shared eligible observations."

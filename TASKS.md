@@ -104,7 +104,7 @@ Topic 2 is complete. No manual data-acquisition or verification step remains.
 ## Future topics
 
 - [x] Signal decoder and backtester.
-- [ ] Dashboard and integration.
+- [x] Dashboard and integration.
 
 ## Topic 4: Signal Decoder & Backtesting
 
@@ -164,3 +164,66 @@ Topic 2 is complete. No manual data-acquisition or verification step remains.
   or encoding change, new dependency, live trading, broker integration, or
   full dashboard was added. Implementation 556bb79 is committed and pushed to
   origin/main. Topic 4 is complete. Topic 5 can proceed; no manual action remains.
+
+## Topic 5: Dashboard, Visualization & Final Integration
+
+- [x] Update approved dashboard specification.
+- [x] Inspect existing research output schemas.
+- [x] Implement dashboard data loading.
+- [x] Implement missing-data handling.
+- [x] Implement ant simulation replay.
+- [x] Implement gold candlestick chart.
+- [x] Implement signal markers.
+- [x] Implement executed trade visualization.
+- [x] Implement strategy performance charts.
+- [x] Implement validation/test selection.
+- [x] Implement trade and signal tables.
+- [x] Implement metadata and research disclaimers.
+- [x] Implement caching where appropriate.
+- [x] Add automated tests.
+- [x] Verify dashboard against actual historical outputs.
+- [x] Run full regression tests.
+- [x] Update README.
+- [x] Complete final integration verification.
+- [ ] Commit and push changes.
+
+### Topic 5 verification (2026-10-23)
+
+- Local Python 3.13.11: 203 pytest tests pass; Ruff and git diff --check pass.
+  All Topic 1–4 tests remain passing. A fresh Python 3.13 virtual environment
+  installed .[dev] successfully, passed pip check, all 203 tests, and Ruff.
+- The read-only dashboard has exactly three primary tabs. It uses configured
+  paths, UTC timestamps, strict schemas, input/result SHA-256 identities,
+  complete feature metadata, partition counts/boundaries, and the existing
+  predictive/trading metric functions. Missing, malformed, duplicate, stale,
+  partial, or mixed outputs produce recovery instructions. Empty trade files
+  preserve zero baselines and undefined metrics; no results are fabricated.
+- Actual history loads: 29,567 candles, 29,311 feature rows, 7,119 predictions,
+  4,526 completed trades, and 4,532 equity rows. All six strategy/partition
+  chart views reconcile with the stored metrics. The four Topic 4 result files
+  remain byte-identical to their approved hashes. Only experiment metadata
+  adds result hashes; source CSV and both feature files remain unchanged.
+- Sixty real historical windows spanning the complete period reproduce every
+  saved checkpoint. Replay derives states from recorded trajectories, including
+  step zero, intermediate steps, all wrapped edges, and step 2,048. The existing
+  grid CLI still generates 29,311 grids; the feature CLI reproduces 100 windows
+  at a separate local output path. Two full backtest reruns reproduce all five
+  exports byte for byte. No model, encoding, trading rule, or setting changed.
+- Streamlit AppTest exercises timestamps, replay step 137, checkpoint 2,048,
+  both partition selectors, date ranges, incomplete date selection, and missing
+  files. HTTP 200 and health=ok pass. Actual headless Chromium interaction
+  exercises all tabs, saved prediction selection, steps 0/1/512/2,048, all
+  strategies, both partitions, and equity reconciliation. Screenshots were
+  inspected; browser JavaScript errors are absent. Plotly retains UTC timestamps.
+- Measured full-data cold loader: 3.410 seconds. Cached AppTest slider rerun:
+  0.269 seconds. Browser checkpoint jump sample: 0.405 seconds. These are local
+  samples, not guaranteed latency. Loading/replay caches are bounded and
+  invalidated by file changes. Only the selected window is simulated.
+- README, SPEC, and TASKS describe the local workflow, controls, metadata
+  upgrade, and limitations. No new dependency, live feed, broker connection,
+  automatic training, database, or cloud deployment was added. Optional
+  automatic playback and extra comparison charts were omitted for simplicity.
+- Local ignored evidence: results/topic5_validation.json,
+  results/topic5_browser_validation.json, replay/gold/comparison screenshots,
+  and verification scripts. No manual data or verification blocker remains.
+  Commit and push remain pending until publication is verified.

@@ -6,7 +6,8 @@ Investigate whether Langton's Ant can provide predictive information for spot
 gold (XAU/USD) on the 1-hour timeframe. This is historical research only.
 Profitability is unknown. Topic 1 provides the foundation. Topic 2 implements
 historical market data and grid encoding. Topic 3 adds ant simulation and
-behavioral features. Topic 4 adds historical signals and backtesting. A full dashboard remains pending.
+behavioral features. Topic 4 adds historical signals and backtesting. Topic 5
+adds the local research dashboard.
 
 ## Technology and structure
 
@@ -19,7 +20,8 @@ No license, CI/CD, Docker, database, broker connection, or live trading is added
 Historical candles -> data -> grid -> simulation -> features -> decoder -> backtest
 
 `anttrader.pipeline` supports data-to-grid and historical feature generation.
-`app.py` remains a Streamlit scaffold. Configuration is file-based in `config.yaml`. Local history
+`app.py` is the Streamlit entry point. Configuration is file-based in
+`config.yaml`. Local history
 belongs in `data/` and generated outputs in `results/`; both are ignored by Git.
 
 ## Topic 2: approved market data
@@ -108,9 +110,7 @@ and serpentine layout. They drive the data-to-grid pipeline.
 
 Topics 3 and 4 finalize the simulation and historical research rules below.
 
-Open decisions remain:
-
-- Topic 5: dashboard controls, charts, and final integration workflows.
+Topic 5 adds display controls only. It introduces no additional research rules.
 
 No missing trading rule or scientific assumption is implied by a placeholder.
 
@@ -190,7 +190,7 @@ CSV. Reject output paths that overwrite the source CSV or configuration file.
 Write a small adjacent .metadata.json with source/config SHA-256, UTC as_of,
 configuration, counts, environment, and elapsed time for reproducibility.
 Generated outputs remain ignored by Git. The default data-to-grid command stays
-available. Dashboard animation remains pending.
+available. Topic 5 reuses this trajectory for interactive replay.
 
 Batch mode stores no trajectory. Optional replay records (row, column,
 direction code) initially and after every move, plus the initial grid and
@@ -259,3 +259,102 @@ grid copy per step. Recording must not change checkpoints or features.
 - One fixed chronological experiment cannot establish sensitivity to other
   periods, proven predictability, or future profitability. Report results
   without selecting parameters to improve performance.
+
+## Topic 5: approved local research dashboard
+
+Use app.py and the existing Streamlit and Plotly dependencies. Provide exactly
+three primary tabs: Ant Simulation, Gold & Signals, and Backtest & Comparison.
+Keep the local application lightweight. No live feed, live trading, broker,
+database, cloud deployment, GUI configuration editor, or automatic pipeline
+execution/model retraining is included. All research settings remain read-only
+in the UI and come from config.yaml. Topics 1–4 rules remain unchanged.
+
+### Data and experiment identity
+
+Resolve source, feature, signal, trade, equity, metric, and metadata paths
+relative to config.yaml. Reuse the market and complete-feature validators, the
+recorded feature cutoff, and the existing UTC/schema contracts. Reject missing
+columns, invalid or naive timestamps, nonfinite values, invalid probabilities,
+duplicate keys, unordered rows, incomplete results, and incompatible metadata.
+Trades/equity permit shared timestamps across strategies, but not duplicate
+timestamps within a strategy and partition.
+
+Extend the experiment metadata with SHA-256 hashes of signals, trades, equity,
+and metrics. This identifies the saved result bundle without changing the
+research algorithm or CSV contracts. Older metadata requires the existing
+backtest CLI once. Validate source, feature, feature-metadata, configuration,
+and result hashes before displaying results. Reconcile counts, trades, equity,
+and stored metrics with the existing metric functions. Display stored metrics;
+do not fit models, regenerate signals, or simulate financial trades in the app.
+
+Show clear file-specific errors and recovery instructions:
+python -m anttrader.pipeline --stage features (complete, without --limit),
+then python -m anttrader.pipeline --stage backtest. Missing market history
+requires the README Dukascopy preparation steps. Never show placeholder results.
+Cache loading using file identities, and cache only selected replay runs with
+a bounded cache. Invalidate caches when configured inputs change.
+
+### Ant Simulation
+
+Offer only decision timestamps in the complete saved feature dataset. Reuse
+the Topic 2 historical-grid iterator on the exact 257 completed-candle window,
+then the Topic 3 simulator with trajectory recording. Compare all checkpoint
+features with the saved row before displaying replay. Show the decision time,
+market window, configuration, original binary grid, and selected replay grid.
+
+The replay slider covers 0 through the configured 2,048 steps, with quick access
+to 256/512/1,024/2,048. Reconstruct flips and read counts from the recorded
+trajectory, not a second movement algorithm. Show the wrapped pose and heading,
+unique cells, revisits, right-turn fraction, black/changed fractions, normalized
+visit entropy, and unwrapped displacement at the selected step. At step zero,
+fractions with a zero step denominator are undefined. Optional automatic
+playback is omitted to keep controls simple.
+
+Show an associated saved AntTrader signal, probability, and partition only
+when an exact prediction timestamp exists. Otherwise say that no saved
+prediction exists. Selecting a window never creates a prediction.
+
+### Gold & Signals
+
+Plot real Dukascopy OHLC candles with UTC opening timestamps, initially a
+practical recent date range. Use a display-only date range and partition filter.
+Keep validation/test results separate, with Test the default. Place BUY/SELL
+prediction markers at their decision timestamps and the saved entry reference
+price. Do not shift signals to the preceding candle or use its later high/low
+to position a decision marker. Keep HOLD rows in the sortable signal table.
+
+Distinguish small green upward BUY/red downward SELL prediction markers from
+larger executed entry markers and exit markers. Read actual trade timestamps
+and prices. Include full signal and trade tables, with retrospective targets
+clearly identified as future outcomes, not model inputs. Display the latest
+saved prediction as Latest Historical Signal with its UTC timestamp.
+
+### Backtest & Comparison
+
+Select Test (default) or Validation. Display the active partition explicitly.
+Use saved metrics for AntTrader, Momentum, and Raw-input logistic regression.
+Show compact summary cards and a comparison table with one column per strategy:
+total gross P&L, completed trades, win rate, average P&L, profit factor, maximum
+realized-equity drawdown, directional accuracy, ROC AUC, BUY/SELL/HOLD counts.
+Display undefined values with their reasons; preserve infinite profit factor.
+
+Plot the three saved cumulative realized gross-P&L curves chronologically with
+their initial zero baseline, consistent strategy colors, and partition labels.
+Final equity must match stored total P&L. Never merge partitions or describe
+training results as out-of-sample.
+
+Display loaded experiment status, source/cutoff, date boundaries, exclusions,
+read-only configuration, and research limitations. Prominently state:
+All backtest P&L represents theoretical price-only performance. Spread,
+slippage, commissions, financing, and execution latency are not modeled.
+Historical results do not establish a profitable live trading strategy.
+
+### Verification
+
+Add fast pytest checks for loading/errors, identity/schema validation,
+trajectory replay, checkpoint parity, signal/trade marker timestamps,
+partition separation, metric reconciliation, and Streamlit controls.
+Run full pytest and Ruff, verify CLI compatibility, and inspect actual local
+research outputs. Exercise tabs, replay controls, and charts in a browser when
+available. HTTP 200 alone does not verify interaction or visual correctness.
+Document actual checks and any remaining limits in TASKS.md and README.md.
