@@ -124,7 +124,7 @@ Topic 2 is complete. No manual data-acquisition or verification step remains.
 - [x] Run full historical experiment.
 - [x] Update README.
 - [x] Verify implementation.
-- [ ] Commit and push verified changes.
+- [x] Commit and push verified changes (556bb79, verified on origin/main).
 
 ### Topic 4 verification (2026-10-23)
 
@@ -162,4 +162,5 @@ Topic 2 is complete. No manual data-acquisition or verification step remains.
   and reconciliation checks; generated files remain ignored by Git.
 - README, SPEC, configuration, and scaffold status are updated. No simulation
   or encoding change, new dependency, live trading, broker integration, or
-  full dashboard was added. Topic 5 can proceed after publication completes.
+  full dashboard was added. Implementation 556bb79 is committed and pushed to
+  origin/main. Topic 4 is complete. Topic 5 can proceed; no manual action remains.
