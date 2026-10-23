@@ -1,4 +1,4 @@
-"""Deterministic Langton's Ant on independent binary 16 x 16 tori."""
+"""Deterministic Langton's Ant on independent binary rectangular tori."""
 
 from dataclasses import dataclass
 from itertools import pairwise
@@ -33,8 +33,8 @@ class SimulationConfig:
             raise ValueError("simulation.steps must be a positive integer.")
         for key in ("start_row", "start_col"):
             value = getattr(self, key)
-            if not _integer(value) or not 0 <= value < 16:
-                raise ValueError(f"simulation.{key} must be an integer in 0..15.")
+            if not _integer(value) or value < 0:
+                raise ValueError(f"simulation.{key} must be a nonnegative integer.")
         if self.initial_direction not in DIRECTIONS:
             raise ValueError(
                 f"simulation.initial_direction must be one of {DIRECTIONS}."
@@ -114,13 +114,16 @@ def simulate(
     and visit matrix. Unwrapped x increases east and unwrapped y increases south.
     """
     initial = np.asarray(grid)
-    if initial.shape != (16, 16) or not np.isin(initial, [0, 1]).all():
-        raise ValueError("Simulation requires a binary 16 x 16 grid.")
+    if initial.ndim != 2 or not initial.size or not np.isin(initial, [0, 1]).all():
+        raise ValueError("Simulation requires a nonempty binary rectangular grid.")
+    rows, columns = initial.shape
+    if config.start_row >= rows or config.start_col >= columns:
+        raise ValueError("simulation starting position is outside the grid.")
     if not isinstance(record_trajectory, bool):
         raise TypeError("record_trajectory must be a boolean.")
     initial = initial.astype(np.uint8, copy=True)
     cells = initial.tolist()
-    visits = [[0] * 16 for _ in range(16)]
+    visits = [[0] * columns for _ in range(rows)]
     row, col = config.start_row, config.start_col
     direction = DIRECTIONS.index(config.initial_direction)
     x = y = right_turns = unique = completed = 0
@@ -139,8 +142,8 @@ def simulate(
                 direction = (direction - 1) % 4
             cells[row][col] = 1 - cell
             dr, dc = DELTAS[direction]
-            row = (row + dr) % 16
-            col = (col + dc) % 16
+            row = (row + dr) % rows
+            col = (col + dc) % columns
             x += dc
             y += dr
             if trajectory is not None:

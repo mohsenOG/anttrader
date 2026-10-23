@@ -34,11 +34,16 @@ FEATURE_NAMES = (
 
 
 def checkpoint_features(state: Checkpoint) -> dict[str, int | float]:
-    """Use cumulative read probabilities and natural-log entropy / ln(256)."""
+    """Use cumulative read probabilities and natural-log entropy / ln(cell count)."""
     if state.steps < 1:
         raise ValueError("Feature extraction requires at least one completed step.")
     probabilities = state.visit_counts[state.visit_counts > 0] / state.steps
-    entropy = -float(np.sum(probabilities * np.log(probabilities))) / np.log(256)
+    cells = state.grid.size
+    entropy = (
+        -float(np.sum(probabilities * np.log(probabilities))) / np.log(cells)
+        if cells > 1
+        else 0.0
+    )
     values = (
         state.row,
         state.col,
@@ -48,8 +53,8 @@ def checkpoint_features(state: Checkpoint) -> dict[str, int | float]:
         state.horizontal_displacement,
         state.vertical_displacement,
         state.right_turns / state.steps,
-        state.black_cells / 256,
-        state.changed_cells / 256,
+        state.black_cells / cells,
+        state.changed_cells / cells,
         float(entropy),
         int(state.visit_counts.max()) / state.steps,
     )

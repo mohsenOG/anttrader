@@ -101,7 +101,8 @@ def load_feature_dataset(
         raise ValueError("Feature market/encoding/configuration metadata mismatch.")
     if metadata["source_sha256"] != sha256(source):
         raise ValueError("Feature source SHA-256 mismatch; regenerate features.")
-    expected = len(candles) - 256
+    lookback = int(np.prod(config["grid_size"]))
+    expected = len(candles) - lookback
     if (
         metadata["limit"] is not None
         or metadata["simulations"] != expected
@@ -121,7 +122,7 @@ def load_feature_dataset(
             "Feature CSV columns/count mismatch; only the 60 ant features are permitted."
         )
     times = decision_times(frame["decision_timestamp"])
-    expected_times = pd.DatetimeIndex(candles.timestamp.iloc[256:] + HOUR)
+    expected_times = pd.DatetimeIndex(candles.timestamp.iloc[lookback:] + HOUR)
     if not times.equals(expected_times):
         raise ValueError(
             "Feature timestamps do not exactly match completed market windows."
@@ -213,17 +214,24 @@ def chronological_partitions(
 
 
 def historical_inputs(
-    candles: pd.DataFrame, decisions, momentum_bars: int = 4
+    candles: pd.DataFrame, decisions, momentum_bars: int = 4, lookback: int = 256
 ) -> tuple[pd.DataFrame, pd.Series, np.ndarray]:
     """Original chronological Topic 2 states, and past-only consecutive momentum."""
     times = decision_times(decisions)
     end = pd.Index(candles.timestamp).get_indexer(times - HOUR)
-    if (end < 256).any():
-        raise ValueError("Each decision requires 257 completed historical closes.")
+    if type(lookback) is not int or lookback < 1:
+        raise ValueError("lookback must be a positive integer.")
+    if (end < lookback).any():
+        raise ValueError(
+            f"Each decision requires {lookback + 1} completed historical closes."
+        )
     states = binary_states(log_returns(candles.close.to_numpy()))
-    windows = np.lib.stride_tricks.sliding_window_view(states, 256)
-    raw = pd.DataFrame(windows[end - 256], columns=RAW_COLUMNS)
-    if momentum_bars > 256:
+    windows = np.lib.stride_tricks.sliding_window_view(states, lookback)
+    raw = pd.DataFrame(
+        windows[end - lookback],
+        columns=[f"return_state_{i:03d}" for i in range(lookback)],
+    )
+    if momentum_bars > lookback:
         raise ValueError("Momentum lookback cannot exceed the available input window.")
     stamps = pd.DatetimeIndex(candles.timestamp)
     momentum_valid = np.ones(len(end), dtype=bool)
@@ -330,5 +338,26 @@ def predictive_metrics(targets, signals, probabilities=None) -> dict:
         accuracy_scope=scope,
         roc_auc=auc,
         roc_auc_note=note,
+    )
+    return result
+
+
+def signal_metrics(targets, signals, probabilities=None) -> dict:
+    """Existing predictive metrics plus v1.1 coverage, side accuracy and Brier."""
+    result = predictive_metrics(targets, signals, probabilities)
+    labels, sides = np.asarray(targets, dtype=int), np.asarray(signals)
+    count = len(labels)
+    result["signal_coverage"] = (
+        result["actionable_observations"] / count if count else None
+    )
+    for side, target in (("BUY", 1), ("SELL", 0)):
+        mask = sides == side
+        result[f"{side.lower()}_accuracy"] = (
+            float((labels[mask] == target).mean()) if mask.any() else None
+        )
+    result["brier_score"] = (
+        float(np.mean((np.asarray(probabilities) - labels) ** 2))
+        if probabilities is not None and count
+        else None
     )
     return result

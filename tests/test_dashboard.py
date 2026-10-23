@@ -345,6 +345,7 @@ def test_streamlit_controls_and_missing_files(bundle):
     assert [tab.label for tab in app.tabs] == [
         "Ant Simulation",
         "Gold & Signals",
+        "Experiment Lab",
     ]
     assert app.selectbox(key="price_partition").value == "Test"
     assert any(item.value == "Latest Historical Signal" for item in app.subheader)
@@ -369,7 +370,7 @@ def test_streamlit_controls_and_missing_files(bundle):
     app.run()
     assert not app.exception
     assert "signals.csv" in app.error[0].value
-    assert "--stage signals" in app.info[0].value
+    assert any("--stage signals" in item.value for item in app.info)
     assert len(app.metric) == 0
 
 

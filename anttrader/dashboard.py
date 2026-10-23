@@ -186,14 +186,21 @@ def load_research(config_path: Path = DEFAULT_CONFIG) -> ResearchData:
             "feature_metadata_sha256": feature_meta_path,
         }
         for key, path in identities.items():
-            if metadata.get(key) != sha256(path):
+            if metadata.get(key) != sha256(path) and not (
+                key == "config_sha256"
+                and metadata["config"].get("experiment_lab")
+                != config.get("experiment_lab")
+                and {
+                    k: v for k, v in metadata["config"].items() if k != "experiment_lab"
+                }
+                == {k: v for k, v in config.items() if k != "experiment_lab"}
+            ):
                 raise ValueError(
                     f"{path}: experiment {key} mismatch; stale or mixed inputs."
                 )
-        if (
-            metadata["config"] != config
-            or metadata["simulation"] != config["simulation"]
-        ):
+        if {k: v for k, v in metadata["config"].items() if k != "experiment_lab"} != {
+            k: v for k, v in config.items() if k != "experiment_lab"
+        } or metadata["simulation"] != config["simulation"]:
             raise ValueError("Experiment configuration metadata mismatch.")
         manifest = metadata.get("output_sha256", {})
         if not isinstance(manifest, dict):
@@ -252,7 +259,10 @@ def load_research(config_path: Path = DEFAULT_CONFIG) -> ResearchData:
             candles, features.decision_timestamp, config["prediction_horizon_bars"]
         )
         _, momentum, momentum_valid = historical_inputs(
-            candles, features.decision_timestamp, config["momentum_lookback_bars"]
+            candles,
+            features.decision_timestamp,
+            config["momentum_lookback_bars"],
+            config["lookback_returns"],
         )
         boundary_valid = splits.outcome_cutoff.isna() | targets.label_end_timestamp.lt(
             splits.outcome_cutoff
@@ -393,11 +403,13 @@ def selected_simulation(
             "Select a timestamp from the saved historical feature dataset."
         )
     end = pd.Index(research.candles.timestamp).get_indexer([timestamp - HOUR])[0]
-    if end < 256:
-        raise ValueError("Selected decision has no complete 257-candle input window.")
+    lookback = int(np.prod(research.config["grid_size"]))
+    if end < lookback:
+        raise ValueError("Selected decision has no complete historical input window.")
     window = next(
         iter_historical_grids(
-            research.candles.iloc[end - 256 : end + 1],
+            research.candles.iloc[end - lookback : end + 1],
+            grid_size=research.config["grid_size"],
             as_of=timestamp,
         )
     )
@@ -428,7 +440,7 @@ def replay_state(result: SimulationResult, step: int) -> Checkpoint:
     if result.trajectory is None:
         raise ValueError("Replay requires a recorded trajectory.")
     poses = np.asarray(result.trajectory[: step + 1], dtype=int)
-    visits = np.zeros((16, 16), dtype=np.int64)
+    visits = np.zeros_like(result.initial_grid, dtype=np.int64)
     np.add.at(visits, (poses[:-1, 0], poses[:-1, 1]), 1)
     grid = result.initial_grid ^ (visits % 2).astype(np.uint8)
     dy, dx = np.asarray(DELTAS)[poses[1:, 2]].sum(axis=0)
@@ -491,10 +503,15 @@ def grid_chart(grid: np.ndarray, state: Checkpoint | None, title: str) -> go.Fig
         xaxis={
             "title": "Column",
             "dtick": 1,
-            "range": [-0.5, 15.5],
+            "range": [-0.5, grid.shape[1] - 0.5],
             "constrain": "domain",
         },
-        yaxis={"title": "Row", "dtick": 1, "range": [15.5, -0.5], "scaleanchor": "x"},
+        yaxis={
+            "title": "Row",
+            "dtick": 1,
+            "range": [grid.shape[0] - 0.5, -0.5],
+            "scaleanchor": "x",
+        },
     )
     return figure
 

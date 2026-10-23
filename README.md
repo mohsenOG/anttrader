@@ -435,3 +435,127 @@ Historical research only. There is no live feed, broker connection, trade
 execution, or trade simulation. One dataset and one chronological split do not
 establish a reliable market edge. This is experimental research, not financial
 advice. No license is granted yet.
+
+
+## AntTrader v1.1 Experiment Lab
+
+Open **Experiment Lab** with `streamlit run app.py`. The original reference is
+16 x 16, 2,048 steps, North, newest return. The original pipeline and saved signal
+outputs remain available. No experiment runs on startup or tab selection.
+
+### Controls and workload
+
+Choose a preset (8 x 8, 12 x 12, 16 x 16, 16 x 6, 20 x 20) or Custom.
+Dimensions mean **rows x columns**; each dimension supports 2..32 cells.
+The lookback is exactly rows*columns returns and rows*columns+1 completed closes.
+Custom steps support 4..16,384. Four checkpoints use half-up integer rounding at
+12.5%, 25%, 50%, and 100%, adjusted to stay positive, unique, and increasing.
+The reference checkpoints remain 256, 512, 1,024, and 2,048.
+
+Choose North, East, South, or West. Newest return uses (rows-1, 0) for even rows
+and (rows-1, columns-1) for odd rows. Center uses (rows//2, columns//2), with
+zero-based coordinates. Only the original one-ant, binary, toroidal rules apply.
+
+Submit **Run Experiment** for one configuration. For **Run Batch**, select grids
+and step counts; the backend runs their Cartesian product with shared direction
+and start settings. Select Custom in the batch grids to use the custom dimensions.
+Include custom steps with the checkbox. A batch supports at most 30 unique
+configurations. The application shows experiment count, common window count,
+and total ant transitions before execution. Decoder fitting adds work. Results
+load from cache when available. There is no additional large-run approval step.
+
+Enable **Use limited historical sample** to use the first N completed candles.
+This is for development checks, not a representative research conclusion.
+Otherwise the lab uses the available completed history. **Reset Settings**
+restores the original ant controls and does not remove saved experiments.
+
+### Compare and inspect
+
+History includes completed and failed runs. Open a completed experiment to use
+its configuration and predictions in **Ant Simulation** and **Gold & Signals**.
+Use **View original v1 reference** to return to the original research view.
+Opening a result does not train a model. Marking a research candidate records a
+local label only.
+
+Each batch starts with the largest grid lookback. Every model uses the same
+decision timestamps, chronological 60/20/20 boundaries, gap exclusions, and
+purged labels. Each configuration fits its own StandardScaler and logistic
+regression. Its raw-input baseline uses exactly the same return signs as its ant.
+Momentum retains the original four completed intervals.
+
+Choose a comparison cohort to see its **validation** leaderboard, sortable table,
+heatmap, and accuracy-versus-coverage chart. Filter direction and starting
+position for the heatmap. Compare up to three compatible configurations, inspect
+all model and baseline metrics, signal disagreement on common timestamps, and
+historical signal overlays. Incompatible cohorts or software versions cannot
+share a ranking. To compare them, run their configurations together in a new
+batch. Test results are separate, previously inspected exploratory diagnostics.
+
+Metrics include ROC AUC, overall accuracy at probability >= 0.5, BUY/SELL-only
+accuracy, coverage, side-specific accuracy, counts, Brier score, sample counts,
+and evaluation dates. Coverage is (BUY+SELL)/eligible observations. HOLD does not
+enter BUY/SELL accuracy. Brier score is mean squared probability error; lower is
+better. Undefined metrics remain null/undefined. Momentum has no probability,
+ROC AUC, or Brier score. Always read accuracy beside counts and coverage; fewer
+than 30 actionable observations produces a warning.
+
+Trying many configurations can produce a high score by luck. Use validation for
+candidate comparisons. The original test period has already been inspected.
+Any final improvement claim needs fresh forward data or an untouched period.
+Small development samples establish software behavior only. There are no
+profitability calculations, automatic deployment, trading, or live feeds.
+
+### Saved results, cache, rerun, and deletion
+
+Results are stored separately under `results/experiments/<id>/`:
+
+- `metadata.json`: normalized configuration, dataset/cohort identity, software
+  hashes and library versions, partitions, elapsed time, warnings, and status.
+- `features.csv`, `predictions.csv`, and `metrics.json`: identified artifacts.
+- Optional `candidate.json`: a local research-candidate label.
+
+Stable IDs include configuration, dataset, sample/cohort, evaluation rules, and
+software versions. Same inputs reuse a completed result without training.
+**Rerun experiment** explicitly recomputes only that result. It preserves the
+old result if calculation fails and validates the replacement before publication.
+Changed data or software requires a new experiment. Partial or altered artifacts
+are rejected. Failed runs remain visible with an error and can be rerun.
+
+To remove one result, select it, enable **Confirm deletion of the selected
+experiment**, then press **Delete selected experiment**. Deletion rejects foreign
+files and links and removes only that experiment. Source data and original
+research outputs are preserved. No delete-all action exists.
+
+### CLI and file-based batches
+
+The CLI uses the same backend as Streamlit. In `config.yaml`,
+`experiment_lab.configurations` is a list of configurations. One entry runs one
+experiment; multiple entries run a common-cohort batch. For example:
+
+```yaml
+experiment_lab:
+  output_dir: results/experiments
+  max_batch: 30
+  sample_candles: null
+  configurations:
+    - {rows: 8, columns: 8, steps: 512, direction: north, start: newest_return}
+    - {rows: 8, columns: 8, steps: 1024, direction: north, start: newest_return}
+    - {rows: 16, columns: 6, steps: 512, direction: north, start: newest_return}
+    - {rows: 16, columns: 6, steps: 1024, direction: north, start: newest_return}
+```
+
+With the local Python 3.13 virtual environment active:
+
+```powershell
+python -m anttrader.experiments --config config.yaml
+python -m anttrader.experiments --config config.yaml --sample-candles 650
+python -m anttrader.experiments --config config.yaml --sample-candles 650 --rerun
+streamlit run app.py
+python -m pytest -q
+ruff check .
+```
+
+A relative source path is resolved against the configuration file. Custom output
+paths must stay inside its `results/experiments` directory. Full historical
+experiments and optimization are user-run. Ordinary tests use small synthetic
+fixtures and existing data checks; they do not run full historical experiments.

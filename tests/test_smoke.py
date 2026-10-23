@@ -65,5 +65,6 @@ def test_dashboard_renders_status():
     assert [tab.label for tab in app.tabs] == [
         "Ant Simulation",
         "Gold & Signals",
+        "Experiment Lab",
     ]
     assert "signal research tool" in app.warning[0].value

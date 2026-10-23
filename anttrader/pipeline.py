@@ -62,8 +62,6 @@ def main(
             raise ValueError("lookback_returns must equal the number of grid cells.")
         simulation = None
         if stage == "features":
-            if shape != (16, 16):
-                raise ValueError("Topic 3 requires grid_size: [16, 16].")
             simulation = SimulationConfig(**config["simulation"])
         path = config_path.resolve().parent / config["historical_csv"]
         if not path.is_file():
@@ -146,10 +144,13 @@ def export_features(
     protected = {source.resolve(), config_path.resolve()}
     if output in protected or metadata_path in protected or output == metadata_path:
         raise ValueError("Feature output/metadata must not overwrite source or config.")
-    if len(candles) < 257:
-        raise ValueError("Need 257 completed closing prices for historical features.")
+    lookback = prod(config["grid_size"])
+    if len(candles) <= lookback:
+        raise ValueError(
+            f"Need {lookback + 1} completed closing prices for historical features."
+        )
     output.parent.mkdir(parents=True, exist_ok=True)
-    grids = iter_historical_grids(candles, as_of=as_of)
+    grids = iter_historical_grids(candles, grid_size=config["grid_size"], as_of=as_of)
     if limit is not None:
         grids = islice(grids, limit)
     columns = ["decision_timestamp", *feature_columns(simulation)]
@@ -171,7 +172,7 @@ def export_features(
             for row in iter_feature_rows(grids, simulation):
                 writer.writerow(row)
                 count += 1
-        expected = len(candles) - 256
+        expected = len(candles) - lookback
         if limit is not None:
             expected = min(expected, limit)
         if count != expected:
@@ -187,7 +188,7 @@ def export_features(
             "as_of": as_of.isoformat(),
             "limit": limit,
             "candles": len(candles),
-            "eligible_grids": len(candles) - 256,
+            "eligible_grids": len(candles) - lookback,
             "simulations": count,
             "transitions": count * simulation.steps,
             "feature_count": len(columns) - 1,

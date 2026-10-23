@@ -150,9 +150,10 @@ def test_protect_source_and_config(tmp_path, target):
     assert (tmp_path / target).read_bytes() == original
 
 
-def test_pipeline_rejects_wrong_grid_dimensions(tmp_path):
+def test_pipeline_supports_rectangular_dimensions(tmp_path):
     path, config, _ = configured_history(tmp_path)
     config["grid_size"] = [8, 32]
+    config["simulation"]["start_row"] = 7
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
-    with pytest.raises(SystemExit, match="requires grid_size"):
-        main(path, stage="features")
+    main(path, stage="features")
+    assert (path.parent / config["feature_output"]).is_file()

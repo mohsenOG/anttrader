@@ -58,6 +58,20 @@ Topic 2 is complete. No manual data-acquisition or verification step remains.
 - The missing-CSV message remains tested. Dependencies and infrastructure are
   unchanged. At Topic 2 completion, no ant or trading logic was implemented.
 
+### Topic 2 instruction-file recheck (2026-10-23)
+
+- Compared instr.txt with the current specification, configuration, loader, grid
+  encoding, tests, and README. All Topic 2 requirements are already implemented.
+  No code change is needed; later approved topics remain unchanged.
+- Local Python 3.13: all 192 tests pass in 30.55 seconds, including real-data
+  integration and no-look-ahead checks. Ruff passes. Tests ran outside the
+  read-only sandbox because temporary test directories require write access.
+- The real-data CLI loads 29,567 completed candles and generates 29,311 grids.
+  The latest 16 x 16 grid is dated 2026-10-01 00:00 UTC. Streamlit starts with
+  HTTP 200 and health=ok; its AppTest also passes.
+- GitHub main matches local HEAD 4d719c2. The implementation is already
+  published. This verification note remains uncommitted pending user confirmation.
+
 ## Topic 3: Langton's Ant Simulation & Feature Extraction
 
 - [x] Document approved simulation specification.
@@ -156,3 +170,49 @@ research methodology remain unchanged.
 - No dependency, infrastructure, model optimization, or new research rule was
   added. No implementation or verification blocker remains. The user approved
   committing and pushing the verified implementation.
+
+
+## AntTrader v1.1: Experiment Lab
+
+Approved scope: lightweight local experiments; no trading or new infrastructure.
+Development uses small samples. Full historical experiments belong to the user.
+
+- [x] Generalize simulation, features, inputs, metadata, and replay.
+- [x] Implement common-cohort single/batch engine, metrics, persistence and CLI.
+- [x] Implement caching, rerun, safe deletion, and research candidates.
+- [x] Add Experiment Lab controls, comparisons, charts, and saved-result views.
+- [x] Verify pytest, Ruff, small historical integration, and dashboard controls.
+- [x] Document commands, parameters, metrics, limits, and research limitations.
+- [x] Obtain approval before commit and push.
+
+
+### v1.1 verification (2026-10-23)
+
+- Python 3.13 in .venv: 221 pytest tests pass in 55.52 seconds. Ruff passes.
+- Checkpoints are checked for every supported step count (4..16,384).
+  Rectangular mapping, starts, wrapping, feature normalization, replay, and
+  the original simulator regression check pass.
+- Small synthetic tests verify common training/evaluation samples, independent
+  scaled decoders, matched raw inputs, future-data independence, metrics,
+  cache reuse, rerun, failed-run recovery, metadata validation, safe deletion,
+  and source-file preservation. Full historical experiments are not in pytest.
+- Streamlit AppTest exercises single and batch runs, reset, opening a saved
+  result, replay, rerun, history, comparison charts, and confirmed deletion.
+  Browser checks verify the original dashboard, rectangular saved-result views,
+  Gold & Signals, and Run Experiment loading the cached limited reference.
+  The browser reported no console errors.
+- Final real-data integration uses only the first 650 completed candles:
+  394 common windows, 48 validation and 42 test predictions per configuration.
+  Configurations: 16 x 16 / 2,048 steps, 8 x 8 / 256 steps, and 16 x 6 / 512 steps.
+  Measured experiment times: 0.731, 0.362, and 0.446 seconds respectively.
+  These are software checks, not predictive-improvement findings.
+- Cache reload, byte-identical rerun predictions, selected-result replays, CLI
+  cache loading, and safe cleanup of earlier development samples pass.
+  Source data and the original 7,119 saved predictions remain unchanged.
+  Local ignored evidence: results/lab_sample_validation.json and three separate
+  limited-sample experiment bundles under results/experiments/.
+- The user's existing Topic 2 instruction-file recheck note is preserved.
+  No dependency or infrastructure was added. No full historical experiment,
+  expensive batch, or optimization was performed.
+- Full historical research is user-run. The user approved commit and push.
+  Approved commit: feat: add AntTrader experiment optimization lab

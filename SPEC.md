@@ -291,3 +291,46 @@ marker coordinates and future-price independence, partition separation, signal
 statistics, missing/stale/partial results, replay controls, and loading without
 trade/equity files. Launch Streamlit and inspect the chart and controls in a
 browser. Record actual results and limits in TASKS.md and README.md.
+
+
+## AntTrader v1.1: Experiment Lab
+
+This extension supersedes only the fixed dimensions, simulation controls, and
+number of dashboard tabs above. The original 16 x 16, 2,048-step, North,
+newest-return experiment remains the default reference. Research stays
+signals-only. The ant rules, encoding, model family, thresholds, four-hour
+labels, market-gap rules, and chronological partition purging stay unchanged.
+
+Support 2..32 rows and columns, 4..16,384 steps, and at most 30 configurations
+per batch. Dimensions mean rows x columns. Each grid uses rows*columns returns
+and rows*columns+1 completed closes. Newest return starts at (rows-1, 0) for
+even rows, or (rows-1, columns-1) for odd rows. Center is (rows//2, columns//2)
+in zero-based coordinates. Four checkpoints use integer half-up rounding of
+steps/8, steps/4, steps/2, steps, clamped in order to leave room for four unique,
+positive increasing checkpoints. Features divide cell counts by actual cell
+count and entropy by ln(cell count); a one-cell simulator has zero entropy.
+
+The lab uses one shared set of decision timestamps based on the largest batch
+lookback. Split this set 60/20/20 before exclusions. Apply the same labels,
+momentum eligibility, and exclusive outcome cutoffs to each configuration.
+Fit independent training-only scaled logistic models for ant and matched raw
+sign inputs. Rank validation results only. Test results are previously inspected
+exploratory diagnostics. Incompatible cohorts must never share a ranking.
+
+Store each result under results/experiments/<stable-id> using JSON and CSV.
+Identity includes normalized parameters, source and completed-data identities,
+cohort observations and evaluation rules, code and library versions. Publish
+completion metadata last; reject partial or altered results. Reuse completed
+results unless rerun is explicit. Delete only a selected validated experiment
+directory after explicit confirmation. Preserve source data and original outputs.
+
+CLI and Streamlit share the same synchronous backend. Forms do not train on
+change or tab selection. Show workload, stage, progress, cache hits, and errors.
+Provide history, reset, rerun, compatible comparisons, validation leaderboard,
+heatmap, accuracy/coverage chart, disagreement, and past-only signal overlays.
+Selected saved experiments can be replayed and viewed in the original tabs.
+Show counts, coverage, small-sample and multiple-comparison warnings. Undefined
+metrics remain null. Research candidates are labels, never deployed models.
+
+Development verification uses pytest, Ruff, and small historical samples only.
+The user runs full historical experiments and optimization separately.

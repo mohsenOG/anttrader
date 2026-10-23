@@ -1,4 +1,4 @@
-"""Local, read-only AntTrader research dashboard."""
+"""Local AntTrader signal research and experiment dashboard."""
 
 from pathlib import Path
 
@@ -20,6 +20,7 @@ from anttrader.dashboard import (
     selected_simulation,
 )
 from anttrader.features import checkpoint_features
+from anttrader.lab_dashboard import render_lab
 from anttrader.pipeline import DEFAULT_CONFIG
 
 
@@ -47,11 +48,17 @@ def main(config_path: Path = DEFAULT_CONFIG) -> None:
     st.write("Langton's Ant Signal Research — XAU/USD 1H")
     st.warning(DISCLAIMER)
     status = st.empty()
-    tabs = st.tabs(["Ant Simulation", "Gold & Signals"])
+    tabs = st.tabs(["Ant Simulation", "Gold & Signals", "Experiment Lab"])
+    with tabs[2]:
+        selected = render_lab(config_path)
     try:
-        signature = input_signature(config_path)
-        with st.spinner("Validating the saved research experiment..."):
-            research = cached_research(str(config_path.resolve()), signature)
+        if selected is not None:
+            research = selected
+            signature = (selected.metadata["id"], selected.metadata["created_utc"])
+        else:
+            signature = input_signature(config_path)
+            with st.spinner("Validating the saved research experiment..."):
+                research = cached_research(str(config_path.resolve()), signature)
     except (ValueError, KeyError, TypeError, OSError, yaml.YAMLError) as exc:
         st.error(str(exc))
         st.info(RECOVERY)
@@ -60,7 +67,7 @@ def main(config_path: Path = DEFAULT_CONFIG) -> None:
     status.caption(
         f"Historical experiment loaded · {len(research.candles):,} candles · "
         f"{len(research.features):,} feature windows · "
-        f"{len(research.signals):,} saved predictions · UTC · Read-only"
+        f"{len(research.signals):,} saved predictions · UTC · Historical research"
     )
     with st.expander("Experiment metadata and research configuration"):
         st.write(
@@ -101,11 +108,11 @@ def main(config_path: Path = DEFAULT_CONFIG) -> None:
             st.error(f"Cannot replay selected window: {exc}")
         else:
             st.caption(
-                f"Decision: {utc(decision)} · 257 completed candle openings: "
+                f"Decision: {utc(decision)} · {research.config['lookback_returns'] + 1} completed candle openings: "
                 f"{utc(window.window_start)} to {utc(window.window_end)}"
             )
             st.caption(
-                f"16 × 16 binary grid · One ant · Start "
+                f"{window.grid.shape[0]} × {window.grid.shape[1]} binary grid · One ant · Start "
                 f"({result.config.start_row}, {result.config.start_col}) "
                 f"{result.config.initial_direction.title()} · Toroidal · "
                 f"{result.config.steps:,} steps · Checkpoint features match saved results"
@@ -149,10 +156,10 @@ def main(config_path: Path = DEFAULT_CONFIG) -> None:
                     features.get("right_turn_fraction"), percent=True
                 ),
                 "Black-cell fraction": format_metric(
-                    state.black_cells / 256, percent=True
+                    state.black_cells / state.grid.size, percent=True
                 ),
                 "Changed-cell fraction": format_metric(
-                    state.changed_cells / 256, percent=True
+                    state.changed_cells / state.grid.size, percent=True
                 ),
                 "Visit entropy": format_metric(features.get("visit_entropy")),
                 "Unwrapped displacement (x east, y south)": (
@@ -195,6 +202,10 @@ def main(config_path: Path = DEFAULT_CONFIG) -> None:
         partition = one.selectbox(
             "Price chart partition", ["Test", "Validation"], key="price_partition"
         ).lower()
+        if partition == "test":
+            st.caption(
+                "Previously inspected exploratory test data. Use validation to compare configurations."
+            )
         strategy = two.selectbox(
             "Displayed strategy", list(STRATEGY_NAMES), format_func=STRATEGY_NAMES.get
         )

@@ -9,7 +9,6 @@ import pandas as pd
 import sklearn
 
 from anttrader.decoder import (
-    RAW_COLUMNS,
     chronological_partitions,
     decode_signals,
     fit_decoder,
@@ -30,33 +29,14 @@ OUTPUT_KEYS = (
 )
 
 
-def run_experiment(
-    candles: pd.DataFrame, config: dict, config_path: Path, source: Path
-) -> dict:
-    validate_research_config(config)
-    base = config_path.resolve().parent
-    feature_path = (base / config["feature_output"]).resolve()
-    outputs = [(base / config[key]).resolve() for key in OUTPUT_KEYS]
-    protected = {
-        source.resolve(),
-        config_path.resolve(),
-        feature_path,
-        feature_path.with_suffix(".metadata.json"),
-    }
-    if len(set(outputs)) != len(outputs) or any(path in protected for path in outputs):
-        raise ValueError(
-            "Experiment outputs must be distinct and must not overwrite inputs or config."
-        )
-    features, feature_metadata = load_feature_dataset(
-        feature_path, candles, source, config
-    )
-    decisions = features.decision_timestamp
+def evaluation_samples(candles, decisions, config, lookback=256) -> dict:
+    """Construct one common label/partition eligibility set before model fitting."""
     splits, boundaries = chronological_partitions(
         decisions, config["train_fraction"], config["validation_fraction"]
     )
     targets = future_targets(candles, decisions, config["prediction_horizon_bars"])
-    raw, momentum, momentum_valid = historical_inputs(
-        candles, decisions, config["momentum_lookback_bars"]
+    _, momentum, momentum_valid = historical_inputs(
+        candles, decisions, config["momentum_lookback_bars"], lookback
     )
     boundary_valid = splits.outcome_cutoff.isna() | targets.label_end_timestamp.lt(
         splits.outcome_cutoff
@@ -67,6 +47,59 @@ def run_experiment(
             raise ValueError(
                 "No shared eligible observations in one or more partitions."
             )
+    for partition in ("train", "validation", "test"):
+        selected = eligible & splits.partition.eq(partition)
+        times = decisions.loc[selected]
+        boundaries[partition].update(
+            eligible_rows=int(selected.sum()),
+            first_eligible_decision=times.iloc[0].isoformat(),
+            last_eligible_decision=times.iloc[-1].isoformat(),
+            latest_eligible_label_end=targets.loc[selected, "label_end_timestamp"]
+            .iloc[-1]
+            .isoformat(),
+            boundary_purged_rows=int(
+                (
+                    splits.partition.eq(partition)
+                    & targets.target_valid
+                    & momentum_valid
+                    & ~boundary_valid
+                ).sum()
+            ),
+        )
+    return {
+        "splits": splits,
+        "boundaries": boundaries,
+        "targets": targets,
+        "momentum": momentum,
+        "momentum_valid": momentum_valid,
+        "boundary_valid": boundary_valid,
+        "eligible": eligible,
+    }
+
+
+def evaluate_features(
+    candles: pd.DataFrame,
+    features: pd.DataFrame,
+    config: dict,
+    lookback: int = 256,
+    prepared: dict | None = None,
+) -> tuple:
+    """Fit independent decoders on shared, purged chronological observations."""
+    decisions = features.decision_timestamp
+    sample = (
+        prepared
+        if prepared is not None
+        else evaluation_samples(candles, decisions, config, lookback)
+    )
+    splits, boundaries, targets = (
+        sample[k] for k in ("splits", "boundaries", "targets")
+    )
+    momentum, momentum_valid, boundary_valid, eligible = (
+        sample[k] for k in ("momentum", "momentum_valid", "boundary_valid", "eligible")
+    )
+    raw, _, _ = historical_inputs(
+        candles, decisions, config["momentum_lookback_bars"], lookback
+    )
     train = eligible & splits.partition.eq("train")
     evaluation = eligible & splits.partition.ne("train")
     signals = targets.loc[evaluation].copy()
@@ -101,25 +134,46 @@ def run_experiment(
             }
             for strategy in STRATEGIES
         }
-    for partition in ("train", "validation", "test"):
-        selected = eligible & splits.partition.eq(partition)
-        times = decisions.loc[selected]
-        boundaries[partition].update(
-            eligible_rows=int(selected.sum()),
-            first_eligible_decision=times.iloc[0].isoformat(),
-            last_eligible_decision=times.iloc[-1].isoformat(),
-            latest_eligible_label_end=targets.loc[selected, "label_end_timestamp"]
-            .iloc[-1]
-            .isoformat(),
-            boundary_purged_rows=int(
-                (
-                    splits.partition.eq(partition)
-                    & targets.target_valid
-                    & momentum_valid
-                    & ~boundary_valid
-                ).sum()
-            ),
+    return (
+        signals,
+        metrics,
+        boundaries,
+        targets,
+        eligible,
+        momentum_valid,
+        boundary_valid,
+    )
+
+
+def run_experiment(
+    candles: pd.DataFrame, config: dict, config_path: Path, source: Path
+) -> dict:
+    validate_research_config(config)
+    base = config_path.resolve().parent
+    feature_path = (base / config["feature_output"]).resolve()
+    outputs = [(base / config[key]).resolve() for key in OUTPUT_KEYS]
+    protected = {
+        source.resolve(),
+        config_path.resolve(),
+        feature_path,
+        feature_path.with_suffix(".metadata.json"),
+    }
+    if len(set(outputs)) != len(outputs) or any(path in protected for path in outputs):
+        raise ValueError(
+            "Experiment outputs must be distinct and must not overwrite inputs or config."
         )
+    features, feature_metadata = load_feature_dataset(
+        feature_path, candles, source, config
+    )
+    (
+        signals,
+        metrics,
+        boundaries,
+        targets,
+        eligible,
+        momentum_valid,
+        boundary_valid,
+    ) = evaluate_features(candles, features, config, config["lookback_returns"])
     metadata = {
         "scope": "complete available feature history; validation and test reported separately",
         "source": str(source.resolve()),
@@ -147,7 +201,9 @@ def run_experiment(
         "shared_eligible_observations": int(eligible.sum()),
         "partitions": boundaries,
         "ant_input_columns": list(features.columns[1:]),
-        "raw_input_columns": RAW_COLUMNS,
+        "raw_input_columns": [
+            f"return_state_{i:03d}" for i in range(config["lookback_returns"])
+        ],
         "model": {
             "scaler": "StandardScaler",
             "estimator": "LogisticRegression",

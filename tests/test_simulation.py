@@ -138,7 +138,6 @@ def test_continuous_checkpoints_determinism_and_independence():
         {"steps": True},
         {"steps": 1.5},
         {"start_row": -1},
-        {"start_col": 16},
         {"start_col": False},
         {"initial_direction": "up"},
         {"boundary": "closed"},
@@ -173,5 +172,5 @@ def test_invalid_config(changes):
     ],
 )
 def test_invalid_input_grid(grid):
-    with pytest.raises(ValueError, match="binary 16 x 16"):
+    with pytest.raises(ValueError, match="binary rectangular|starting position"):
         simulate(grid)

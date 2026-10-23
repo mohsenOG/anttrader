@@ -43,3 +43,16 @@ momentum_lookback_bars: 4
 signal_output: results/signals.csv
 metrics_output: results/metrics.json
 experiment_metadata_output: results/experiment.metadata.json
+
+
+# v1.1 manual experiments. Original v1 settings above remain the reference.
+experiment_lab:
+  output_dir: results/experiments
+  max_batch: 30
+  sample_candles: null  # null = full history; integer = first N completed candles
+  configurations:
+    - rows: 16
+      columns: 16
+      steps: 2048
+      direction: north
+      start: newest_return
