@@ -185,7 +185,7 @@ Topic 2 is complete. No manual data-acquisition or verification step remains.
 - [x] Run full regression tests.
 - [x] Update README.
 - [x] Complete final integration verification.
-- [ ] Commit and push changes.
+- [x] Commit and push changes (1adba1f, verified on origin/main).
 
 ### Topic 5 verification (2026-10-23)
 
@@ -226,4 +226,5 @@ Topic 2 is complete. No manual data-acquisition or verification step remains.
 - Local ignored evidence: results/topic5_validation.json,
   results/topic5_browser_validation.json, replay/gold/comparison screenshots,
   and verification scripts. No manual data or verification blocker remains.
-  Commit and push remain pending until publication is verified.
+  Implementation 1adba1f is committed and pushed to origin/main.
+  AntTrader v1 is complete and verified.
