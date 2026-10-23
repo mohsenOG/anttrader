@@ -9,11 +9,9 @@ import pytest
 from streamlit.testing.v1 import AppTest
 from test_experiment import exported_history as exported_history  # noqa: PLC0414 -- pytest fixture registration
 
-from anttrader.backtest import predictive_metrics, trading_metrics
 from anttrader.dashboard import (
     STRATEGY_NAMES,
     comparison_table,
-    equity_chart,
     format_metric,
     input_signature,
     load_research,
@@ -32,7 +30,7 @@ from anttrader.simulation import SimulationConfig, simulate
 @pytest.fixture
 def bundle(exported_history):
     path, settings, _, _ = exported_history
-    main(path, stage="backtest")
+    main(path, stage="signals")
     return path, settings
 
 
@@ -48,7 +46,11 @@ def save_result(path, settings, key, value):
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 
 
-def test_bundle_loads_utc_separate_partitions_and_metric_views(bundle):
+def test_bundle_loads_utc_separate_partitions_and_metric_views(bundle, monkeypatch):
+    def forbidden_fit(*args, **kwargs):
+        pytest.fail("The dashboard must not train a model.")
+
+    monkeypatch.setattr("anttrader.experiment.fit_decoder", forbidden_fit)
     path, settings = bundle
     research = load_research(path)
     for key in OUTPUT_KEYS[:-1]:
@@ -58,29 +60,26 @@ def test_bundle_loads_utc_separate_partitions_and_metric_views(bundle):
     assert str(research.signals.decision_timestamp.dt.tz) == "UTC"
     assert research.features.decision_timestamp.is_monotonic_increasing
     assert set(research.signals.partition) == {"validation", "test"}
-    assert (
-        research.equity.timestamp.duplicated().any()
-    )  # Different strategies are valid.
     for partition in ("validation", "test"):
         table = comparison_table(research.metrics, partition)
-        chart = equity_chart(research.equity, partition)
+        selected = research.signals.loc[research.signals.partition.eq(partition)]
         assert list(table) == list(STRATEGY_NAMES.values())
-        for strategy, trace in zip(STRATEGIES, chart.data, strict=True):
-            stored = research.metrics["partitions"][partition][strategy]["trading"]
-            assert trace.name == STRATEGY_NAMES[strategy]
-            assert trace.y[0] == 0
-            assert trace.y[-1] == pytest.approx(stored["total_gross_pnl_usd"])
-            assert table.loc["Completed trades", trace.name] == format_metric(
-                stored["completed_trades"]
-            )
-            selected = research.equity.loc[
-                research.equity.partition.eq(partition)
-                & research.equity.strategy.eq(strategy)
-            ]
-            assert list(trace.x) == list(selected.timestamp)
-        assert partition.title() in chart.layout.title.text
+        for strategy in STRATEGIES:
+            stored = research.metrics["partitions"][partition][strategy]["predictive"]
+            assert table.loc[
+                "Total signals", STRATEGY_NAMES[strategy]
+            ] == format_metric(len(selected))
+            assert sum(stored["signal_counts"].values()) == len(selected)
     assert format_metric(None) == "Undefined"
-    assert format_metric("infinity") == "Infinity"
+    assert not hasattr(research, "trades") and not hasattr(research, "equity")
+    assert not (path.parent / "results/trades.csv").exists()
+    assert not (path.parent / "results/equity.csv").exists()
+    before = input_signature(path)
+    # Unused legacy files must not enter the loader or its cache signature.
+    (path.parent / "results/trades.csv").write_text("obsolete")
+    (path.parent / "results/equity.csv").write_text("obsolete")
+    assert input_signature(path) == before
+    load_research(path)
 
 
 @pytest.mark.parametrize(
@@ -104,7 +103,7 @@ def test_missing_files_name_path_and_recovery_command(bundle, key):
         load_research(path)
     assert str(missing) in str(failure.value)
     assert "--stage features" in str(failure.value)
-    assert "--stage backtest" in str(failure.value)
+    assert "--stage signals" in str(failure.value)
 
 
 @pytest.mark.parametrize(
@@ -156,12 +155,10 @@ def test_incompatible_or_stale_metadata_is_rejected(bundle, change):
         ("signal", "signal_output"),
         ("target", "signal_output"),
         ("partial", "signal_output"),
-        ("duplicate", "trade_output"),
-        ("strategy", "trade_output"),
-        ("pnl", "trade_output"),
-        ("exit", "trade_output"),
-        ("equity", "equity_output"),
-        ("duplicate", "equity_output"),
+        ("reference", "signal_output"),
+        ("partition", "signal_output"),
+        ("momentum", "signal_output"),
+        ("label_end", "signal_output"),
     ],
 )
 def test_malformed_and_partial_result_contracts_are_rejected(bundle, change, key):
@@ -186,14 +183,14 @@ def test_malformed_and_partial_result_contracts_are_rejected(bundle, change, key
         frame.loc[0, "target"] = 1 - frame.loc[0, "target"]
     elif change == "partial":
         frame = frame.iloc[:-1]
-    elif change == "strategy":
-        frame.loc[0, "strategy"] = "unknown"
-    elif change == "pnl":
-        frame.loc[0, "gross_pnl_usd"] += 10
-    elif change == "exit":
-        frame.loc[0, "exit_timestamp"] = frame.loc[0, "entry_timestamp"]
-    else:
-        frame.loc[len(frame) - 1, "cumulative_gross_pnl_usd"] += 10
+    elif change == "reference":
+        frame.loc[0, "reference_price"] += 1
+    elif change == "partition":
+        frame.loc[0, "partition"] = "test"
+    elif change == "momentum":
+        frame.loc[0, "momentum_signal"] = "INVALID"
+    elif change == "label_end":
+        frame.loc[0, "label_end_timestamp"] = frame.loc[0, "decision_timestamp"]
     # Re-sign intentionally to exercise semantic checks, not only file identity.
     save_result(path, settings, key, frame)
     with pytest.raises(ValueError, match="Cannot load research"):
@@ -213,58 +210,10 @@ def test_mixed_outputs_and_incorrect_stored_metrics_are_rejected(bundle):
     metrics = json.loads(
         (path.parent / settings["metrics_output"]).read_text(encoding="utf-8")
     )
-    metrics["partitions"]["test"]["ant"]["trading"]["completed_trades"] += 1
+    metrics["partitions"]["test"]["ant"]["predictive"]["signal_counts"]["BUY"] += 1
     save_result(path, settings, "metrics_output", metrics)
-    with pytest.raises(ValueError, match="completed_trades"):
+    with pytest.raises(ValueError, match="BUY"):
         load_research(path)
-
-
-@pytest.mark.parametrize("empty_strategies", [("ant",), STRATEGIES])
-def test_no_trade_bundle_keeps_zero_baseline_and_undefined_metrics(
-    bundle, empty_strategies
-):
-    path, settings = bundle
-    research = load_research(path)
-    signals = research.signals.copy()
-    trades = research.trades.loc[~research.trades.strategy.isin(empty_strategies)]
-    curves = [research.equity.loc[~research.equity.strategy.isin(empty_strategies)]]
-    for strategy in empty_strategies:
-        signals[f"{strategy}_signal"] = "HOLD"
-        if strategy != "momentum":
-            signals[f"{strategy}_p_up"] = 0.5
-        for partition in ("validation", "test"):
-            selected = signals.loc[signals.partition.eq(partition)]
-            curve = pd.DataFrame(
-                {
-                    "timestamp": [selected.decision_timestamp.iloc[0]],
-                    "cumulative_gross_pnl_usd": [0.0],
-                    "partition": [partition],
-                    "strategy": [strategy],
-                }
-            )
-            curves.append(curve)
-            research.metrics["partitions"][partition][strategy] = {
-                "predictive": predictive_metrics(
-                    selected.target,
-                    selected[f"{strategy}_signal"],
-                    None if strategy == "momentum" else selected[f"{strategy}_p_up"],
-                ),
-                "trading": trading_metrics(
-                    trades.loc[trades.strategy.eq(strategy)], curve
-                ),
-            }
-    equity = pd.concat(curves).sort_values(["timestamp", "strategy"], kind="stable")
-    for key, value in (
-        ("signal_output", signals),
-        ("trade_output", trades),
-        ("equity_output", equity),
-        ("metrics_output", research.metrics),
-    ):
-        save_result(path, settings, key, value)
-    loaded = load_research(path)
-    table = comparison_table(loaded.metrics, "test")
-    assert table.loc["Win rate", "AntTrader"] == "Undefined"
-    assert equity_chart(loaded.equity, "test").data[0].y == (0.0,)
 
 
 def test_selected_grid_replay_checkpoints_and_future_independence(bundle):
@@ -328,27 +277,62 @@ def test_recorded_replay_reconstructs_wrapped_edges():
     )
 
 
-def test_price_markers_use_saved_decision_entry_exit_times(bundle):
+def test_price_markers_use_decision_times_and_only_completed_candles(bundle):
     path, _ = bundle
     research = load_research(path)
-    signals = research.signals.loc[research.signals.partition.eq("test")]
-    trades = research.trades.loc[
-        research.trades.partition.eq("test") & research.trades.strategy.eq("ant")
-    ]
-    chart = price_chart(research.candles, signals, trades, "ant", "test")
+    signals = research.signals.loc[research.signals.partition.eq("test")].copy()
+    # Exercise both sides even if a small trained dataset contains mostly HOLD.
+    signals["ant_signal"] = np.where(np.arange(len(signals)) % 2, "BUY", "SELL")
+    chart = price_chart(research.candles, signals, "ant", "test")
     assert chart.data[0].type == "candlestick"
-    for signal, pred_index, entry_index in (("BUY", 1, 2), ("SELL", 3, 4)):
+    assert chart.layout.height == 800
+    for signal, index in (("BUY", 1), ("SELL", 2)):
         predictions = signals.loc[signals.ant_signal.eq(signal)]
-        entries = trades.loc[trades.signal.eq(signal)]
-        assert list(chart.data[pred_index].x) == list(predictions.decision_timestamp)
-        assert list(chart.data[entry_index].x) == list(entries.entry_timestamp)
-        np.testing.assert_array_equal(chart.data[pred_index].y, predictions.entry_price)
-        np.testing.assert_array_equal(chart.data[entry_index].y, entries.entry_price)
-        assert chart.data[pred_index].marker.size < chart.data[entry_index].marker.size
-    assert list(chart.data[-1].x) == list(trades.exit_timestamp)
-    np.testing.assert_array_equal(chart.data[-1].y, trades.exit_price)
+        trace = chart.data[index]
+        assert list(trace.x) == list(predictions.decision_timestamp)
+        reference = research.candles.set_index("timestamp").reindex(
+            predictions.decision_timestamp - pd.Timedelta(hours=1)
+        )
+        assert (
+            (np.asarray(trace.y) < reference.low.to_numpy()).all()
+            if signal == "BUY"
+            else (np.asarray(trace.y) > reference.high.to_numpy()).all()
+        )
+        assert trace.marker.size == 16
+        assert "UTC" in trace.hovertemplate and "P(up)" in trace.hovertemplate
+        assert (
+            "Partition" in trace.hovertemplate
+            and "Last completed close" in trace.hovertemplate
+        )
+        assert [row[1] for row in trace.customdata] == list(predictions.reference_price)
+        assert [row[2] for row in trace.customdata] == ["test"] * len(predictions)
     assert all("HOLD" not in trace.name for trace in chart.data)
-    assert sum(len(chart.data[i].x) for i in (2, 4)) == len(trades)
+    one = signals.iloc[[0]]
+    cutoff = one.decision_timestamp.iloc[0]
+    before = price_chart(research.candles, one, "ant", "test")
+    changed = research.candles.copy()
+    changed.loc[changed.timestamp.ge(cutoff), ["open", "high", "low", "close"]] *= 10
+    after = price_chart(changed, one, "ant", "test")
+    for index in (1, 2):
+        np.testing.assert_array_equal(before.data[index].y, after.data[index].y)
+        assert before.data[index].x == after.data[index].x
+        assert before.data[index].customdata == after.data[index].customdata
+    filtered = price_chart(
+        research.candles, research.signals, "ant", "validation", visible_sides=("SELL",)
+    )
+    assert len(filtered.data) == 2 and filtered.data[1].name == "SELL prediction"
+    assert {row[2] for row in filtered.data[1].customdata} <= {"validation"}
+    # The first visible decision still uses the preceding completed candle.
+    boundary = price_chart(
+        research.candles,
+        one,
+        "ant",
+        "test",
+        start=cutoff,
+        stop=cutoff + pd.Timedelta(hours=1),
+    )
+    assert boundary.data[1].x == before.data[1].x
+    assert boundary.data[2].x == before.data[2].x
 
 
 def test_streamlit_controls_and_missing_files(bundle):
@@ -361,21 +345,19 @@ def test_streamlit_controls_and_missing_files(bundle):
     assert [tab.label for tab in app.tabs] == [
         "Ant Simulation",
         "Gold & Signals",
-        "Backtest & Comparison",
     ]
-    assert app.selectbox(key="performance_partition").value == "Test"
+    assert app.selectbox(key="price_partition").value == "Test"
     assert any(item.value == "Latest Historical Signal" for item in app.subheader)
     assert app.slider(key="replay_step").value == 0
     app.slider(key="replay_step").set_value(137).run()
     assert not app.exception and app.slider(key="replay_step").value == 137
     app.selectbox(key="checkpoint_step").set_value(2048).run()
     assert not app.exception and app.slider(key="replay_step").value == 2048
-    app.selectbox(key="performance_partition").select("Validation").run()
-    assert (
-        not app.exception
-        and app.selectbox(key="performance_partition").value == "Validation"
-    )
     app.selectbox(key="price_partition").select("Validation").run()
+    assert not app.exception
+    app.multiselect(key="visible_sides").set_value(["BUY"]).run()
+    assert not app.exception
+    app.multiselect(key="visible_sides").set_value([]).run()
     assert not app.exception
     end = app.date_input[0].value[-1]
     app.date_input[0].set_value((end, end)).run()
@@ -387,7 +369,7 @@ def test_streamlit_controls_and_missing_files(bundle):
     app.run()
     assert not app.exception
     assert "signals.csv" in app.error[0].value
-    assert "--stage backtest" in app.info[0].value
+    assert "--stage signals" in app.info[0].value
     assert len(app.metric) == 0
 
 

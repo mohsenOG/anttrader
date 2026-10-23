@@ -14,6 +14,7 @@ from anttrader.decoder import (
     future_targets,
     historical_inputs,
     predict_up,
+    predictive_metrics,
     validate_research_config,
 )
 from anttrader.features import iter_feature_rows
@@ -39,16 +40,18 @@ def config():
     return yaml.safe_load(DEFAULT_CONFIG.read_text(encoding="utf-8"))
 
 
-def test_targets_entry_exit_zero_negative_and_tail():
+def test_label_horizon_zero_negative_and_tail():
     candles = history(12)
     candles["open"] = [100, 100, 100, 100, 100, 110, 100, 90, 100, 100, 100, 100]
     decisions = candles.timestamp.iloc[:-1] + HOUR
     targets = future_targets(candles, decisions)
     first = targets.iloc[0]
     assert (
-        first.decision_timestamp == first.entry_timestamp == candles.timestamp.iloc[1]
+        first.decision_timestamp
+        == first.label_start_timestamp
+        == candles.timestamp.iloc[1]
     )
-    assert first.exit_timestamp == candles.timestamp.iloc[5]
+    assert first.label_end_timestamp == candles.timestamp.iloc[5]
     assert first.future_return == pytest.approx(np.log(110 / 100))
     assert targets.target.iloc[:3].tolist() == [1, 0, 0]
     assert targets.target_valid.sum() == 7
@@ -57,7 +60,7 @@ def test_targets_entry_exit_zero_negative_and_tail():
 
 
 @pytest.mark.parametrize("missing", [1, 2, 3, 4, 5])
-def test_gap_in_any_execution_hour_excludes_label(missing):
+def test_gap_in_any_label_hour_excludes_label(missing):
     candles = history(12)
     decision = candles.timestamp.iloc[1]
     targets = future_targets(candles.drop(index=missing), [decision])
@@ -71,7 +74,7 @@ def test_split_before_filter_and_exclusive_boundary_purge():
     decisions = candles.timestamp.iloc[:40] + HOUR
     splits, boundaries = chronological_partitions(decisions, 0.6, 0.2)
     targets = future_targets(candles, decisions)
-    allowed = splits.outcome_cutoff.isna() | targets.exit_timestamp.lt(
+    allowed = splits.outcome_cutoff.isna() | targets.label_end_timestamp.lt(
         splits.outcome_cutoff
     )
     assert (
@@ -81,7 +84,7 @@ def test_split_before_filter_and_exclusive_boundary_purge():
     for name in ("train", "validation"):
         selected = allowed & splits.partition.eq(name)
         assert (
-            targets.loc[selected, "exit_timestamp"]
+            targets.loc[selected, "label_end_timestamp"]
             < splits.loc[selected, "outcome_cutoff"]
         ).all()
         assert (splits.partition.eq(name) & ~allowed).sum() == 4
@@ -149,7 +152,8 @@ def test_train_only_scaler_estimator_frozen_deterministic_and_stable_columns():
     labels = future_targets(candles, decisions)
     splits, _ = chronological_partitions(decisions, 0.6, 0.2)
     eligible = labels.target_valid & (
-        splits.outcome_cutoff.isna() | labels.exit_timestamp.lt(splits.outcome_cutoff)
+        splits.outcome_cutoff.isna()
+        | labels.label_end_timestamp.lt(splits.outcome_cutoff)
     )
     train = eligible & splits.partition.eq("train")
     later = eligible & splits.partition.ne("train")
@@ -202,9 +206,8 @@ def test_train_only_scaler_estimator_frozen_deterministic_and_stable_columns():
 @pytest.mark.parametrize(
     "key,value",
     [
-        ("holding_period_bars", 3),
-        ("maximum_concurrent_positions", 2),
-        ("position_quantity_ounces", 0),
+        ("prediction_horizon_bars", 0),
+        ("momentum_lookback_bars", 0),
         ("train_fraction", 0.8),
         ("standard_scaler", False),
     ],
@@ -214,3 +217,35 @@ def test_research_configuration_validation(key, value):
     settings[key] = value
     with pytest.raises(ValueError):
         validate_research_config(settings)
+
+
+def test_predictive_metrics_counts_and_undefined_auc():
+    metrics = predictive_metrics([1, 1, 1], ["BUY", "SELL", "HOLD"], [0.55, 0.45, 0.5])
+    assert metrics["roc_auc"] is None and metrics["roc_auc_note"]
+    assert metrics["directional_accuracy"] == pytest.approx(2 / 3)
+    assert sum(metrics["signal_counts"].values()) == metrics["valid_observations"] == 3
+    assert sum(metrics["signal_fractions"].values()) == 1
+    assert predictive_metrics([1, 0], ["BUY", "SELL"], [0.6, 0.4])["roc_auc"] == 1
+    momentum = predictive_metrics([1, 0, 1], ["BUY", "SELL", "HOLD"])
+    assert momentum["directional_accuracy"] == 1 and momentum["roc_auc"] is None
+    assert not any(
+        isinstance(v, float) and not np.isfinite(v) for v in metrics.values()
+    )
+
+
+def test_actionable_accuracy_and_undefined_hold_scope():
+    metrics = predictive_metrics([1, 1, 1], ["BUY", "SELL", "HOLD"], [0.55, 0.45, 0.5])
+    assert metrics["actionable_observations"] == 2
+    assert metrics["actionable_accuracy"] == 0.5
+    assert metrics["directional_accuracy"] == pytest.approx(2 / 3)
+    hold = predictive_metrics([0, 1], ["HOLD", "HOLD"], [0.5, 0.5])
+    assert hold["actionable_accuracy"] is None
+    assert hold["actionable_observations"] == 0
+    assert hold["actionable_accuracy_note"]
+    empty = predictive_metrics([], [], [])
+    assert (
+        empty["directional_accuracy"]
+        is empty["actionable_accuracy"]
+        is empty["roc_auc"]
+        is None
+    )

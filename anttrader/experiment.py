@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 import sklearn
 
-from anttrader.backtest import predictive_metrics, simulate_trades, trading_metrics
 from anttrader.decoder import (
     RAW_COLUMNS,
     chronological_partitions,
@@ -18,6 +17,7 @@ from anttrader.decoder import (
     historical_inputs,
     load_feature_dataset,
     predict_up,
+    predictive_metrics,
     sha256,
     validate_research_config,
 )
@@ -25,8 +25,6 @@ from anttrader.decoder import (
 STRATEGIES = ("ant", "momentum", "raw")
 OUTPUT_KEYS = (
     "signal_output",
-    "trade_output",
-    "equity_output",
     "metrics_output",
     "experiment_metadata_output",
 )
@@ -60,7 +58,7 @@ def run_experiment(
     raw, momentum, momentum_valid = historical_inputs(
         candles, decisions, config["momentum_lookback_bars"]
     )
-    boundary_valid = splits.outcome_cutoff.isna() | targets.exit_timestamp.lt(
+    boundary_valid = splits.outcome_cutoff.isna() | targets.label_end_timestamp.lt(
         splits.outcome_cutoff
     )
     eligible = targets.target_valid & momentum_valid & boundary_valid
@@ -72,6 +70,13 @@ def run_experiment(
     train = eligible & splits.partition.eq("train")
     evaluation = eligible & splits.partition.ne("train")
     signals = targets.loc[evaluation].copy()
+    signals["reference_price"] = (
+        candles.set_index("timestamp")
+        .close.reindex(
+            pd.DatetimeIndex(signals.decision_timestamp) - pd.Timedelta(hours=1)
+        )
+        .to_numpy()
+    )
     signals["partition"] = splits.loc[evaluation, "partition"]
     signals["momentum_signal"] = momentum.loc[evaluation]
     signals = signals.reset_index(drop=True)
@@ -83,48 +88,19 @@ def run_experiment(
         signals[f"{name}_signal"] = decode_signals(
             probabilities, buy=config["buy_threshold"], sell=config["sell_threshold"]
         )
-    metrics = {
-        "pnl_basis": "gross price-only simulated P&L in USD; all costs zero",
-        "partitions": {},
-    }
-    all_trades, all_equity = [], []
+    metrics = {"partitions": {}}
     for partition in ("validation", "test"):
-        frame = signals.loc[signals.partition.eq(partition)].reset_index(drop=True)
-        metrics["partitions"][partition] = {}
-        for strategy in STRATEGIES:
-            probability = None if strategy == "momentum" else frame[f"{strategy}_p_up"]
-            orders = pd.DataFrame(
-                {
-                    "decision_timestamp": frame.decision_timestamp,
-                    "signal": frame[f"{strategy}_signal"],
-                }
-            )
-            if probability is not None:
-                orders["p_up"] = probability
-            trades, equity = simulate_trades(
-                candles,
-                orders,
-                quantity=config["position_quantity_ounces"],
-                holding_bars=config["holding_period_bars"],
-            )
-            metrics["partitions"][partition][strategy] = {
+        frame = signals.loc[signals.partition.eq(partition)]
+        metrics["partitions"][partition] = {
+            strategy: {
                 "predictive": predictive_metrics(
-                    frame.target, orders.signal, probability
-                ),
-                "trading": trading_metrics(trades, equity),
+                    frame.target,
+                    frame[f"{strategy}_signal"],
+                    None if strategy == "momentum" else frame[f"{strategy}_p_up"],
+                )
             }
-            all_trades.append(trades.assign(partition=partition, strategy=strategy))
-            all_equity.append(equity.assign(partition=partition, strategy=strategy))
-    trades = (
-        pd.concat(all_trades, ignore_index=True)
-        .sort_values(["decision_timestamp", "strategy"], kind="stable")
-        .reset_index(drop=True)
-    )
-    equity = (
-        pd.concat(all_equity, ignore_index=True)
-        .sort_values(["timestamp", "strategy"], kind="stable")
-        .reset_index(drop=True)
-    )
+            for strategy in STRATEGIES
+        }
     for partition in ("train", "validation", "test"):
         selected = eligible & splits.partition.eq(partition)
         times = decisions.loc[selected]
@@ -132,7 +108,7 @@ def run_experiment(
             eligible_rows=int(selected.sum()),
             first_eligible_decision=times.iloc[0].isoformat(),
             last_eligible_decision=times.iloc[-1].isoformat(),
-            latest_eligible_exit=targets.loc[selected, "exit_timestamp"]
+            latest_eligible_label_end=targets.loc[selected, "label_end_timestamp"]
             .iloc[-1]
             .isoformat(),
             boundary_purged_rows=int(
@@ -178,11 +154,10 @@ def run_experiment(
             "random_state": config["random_state"],
             **config["logistic_regression"],
         },
-        "execution": "decision D after candle D-1h completes; bid open entry D; exit D+horizon; idealized zero latency",
-        "pnl_basis": metrics["pnl_basis"],
-        "costs": "zero spread, slippage, commission, swap, financing",
-        "equity_basis": "realized trades with initial zero; no intratrade drawdown",
-        "boundary_rule": "exit strictly before next partition first decision; test exits must exist in source",
+        "schema": "signals-only-v1",
+        "label_rule": f"ln(open at D+{config['prediction_horizon_bars']}h / open at D) > 0; retrospective labels only",
+        "reference_rule": "last completed candle close at D-1h; display reference only",
+        "boundary_rule": "label end strictly before next partition first decision",
         "model_fit": "training only; no refit, calibration, tuning, or threshold search",
         "versions": {
             "python": platform.python_version(),
@@ -197,24 +172,23 @@ def run_experiment(
     for path in outputs:
         path.parent.mkdir(parents=True, exist_ok=True)
     signals.to_csv(outputs[0], index=False, lineterminator="\n")
-    trades.to_csv(outputs[1], index=False, lineterminator="\n")
-    equity.to_csv(outputs[2], index=False, lineterminator="\n")
-    outputs[3].write_text(metrics_json, encoding="utf-8")
+    outputs[1].write_text(metrics_json, encoding="utf-8")
     metadata["output_sha256"] = {
-        key: sha256(path) for key, path in zip(OUTPUT_KEYS[:-1], outputs[:-1], strict=True)
+        key: sha256(path)
+        for key, path in zip(OUTPUT_KEYS[:-1], outputs[:-1], strict=True)
     }
     metadata_json = json.dumps(metadata, indent=2, allow_nan=False) + "\n"
-    outputs[4].write_text(metadata_json, encoding="utf-8")
+    outputs[2].write_text(metadata_json, encoding="utf-8")
     print(
         f"Complete history: {len(features):,} feature rows; {int(eligible.sum()):,} shared eligible observations."
     )
-    print(metrics["pnl_basis"])
     for partition, values in metrics["partitions"].items():
         print(f"{partition}: {boundaries[partition]['eligible_rows']:,} observations")
         for strategy, result in values.items():
-            trading = result["trading"]
+            counts = result["predictive"]["signal_counts"]
             print(
-                f"  {strategy}: {trading['completed_trades']} trades; gross P&L USD {trading['total_gross_pnl_usd']:.3f}"
+                f"  {strategy}: "
+                + ", ".join(f"{name} {count:,}" for name, count in counts.items())
             )
     print("Outputs: " + ", ".join(str(path) for path in outputs))
     return metrics

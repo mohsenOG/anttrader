@@ -97,134 +97,62 @@ Topic 2 is complete. No manual data-acquisition or verification step remains.
   results/topic3_validation.json remain local and ignored by Git.
 - Topic 2 CLI still produces all 29,311 grids. Streamlit passes AppTest and
   launches with HTTP 200 / health=ok. No new dependencies or infrastructure.
-- Topic 4 design can begin. No labels, signals, backtesting, profitability
+- Topic 4 design can begin. No labels, signals, historical prediction evaluation, profitability
   findings, or interactive dashboard animation were added. No manual data step
   or implementation blocker remains.
 
-## Future topics
+## Topic 4: Signal Decoder and Historical Evaluation
 
-- [x] Signal decoder and backtester.
-- [x] Dashboard and integration.
+The original decoder and dashboard were implemented and verified before this
+refactor. Their historical trading scope is superseded by the signals-only
+specification below. The approved model, features, thresholds, and chronological
+research methodology remain unchanged.
 
-## Topic 4: Signal Decoder & Backtesting
+## Signals-only refactor
 
-- [x] Document approved decoder and trading rules.
-- [x] Update configuration.
-- [x] Validate feature and price-data alignment.
-- [x] Implement future-return targets.
-- [x] Implement chronological dataset splitting.
-- [x] Implement leakage-safe model training.
-- [x] Implement BUY/SELL/HOLD decoding.
-- [x] Implement historical trade simulation.
-- [x] Implement theoretical P&L calculations.
-- [x] Implement performance metrics.
-- [x] Implement benchmark strategies.
-- [x] Export experiment results.
-- [x] Add automated tests.
-- [x] Run full historical experiment.
-- [x] Update README.
-- [x] Verify implementation.
-- [x] Commit and push verified changes (556bb79, verified on origin/main).
+- [x] Inspect dependencies and save historical prediction/source baselines.
+- [x] Remove trade, position, forced-exit, P&L, equity, and drawdown code/config.
+- [x] Retain the four-hour horizon only for forecast labels.
+- [x] Add the signals CLI and signal-only outputs with strict validation.
+- [x] Keep the ant simulation, 60 features, models, and thresholds unchanged.
+- [x] Provide Ant Simulation and Gold & Signals tabs.
+- [x] Enlarge the gold chart and add visible past-only decision markers.
+- [x] Keep separate validation/test predictive statistics and signal history.
+- [x] Verify dashboard loading without trading output files.
+- [x] Update tests and documentation.
+- [x] Run pytest, Ruff, and historical prediction parity checks.
+- [x] Launch Streamlit and visually verify the chart and controls.
+- [x] Obtain user confirmation before commit and push.
 
-### Topic 4 verification (2026-10-23)
+### Verification (2026-10-23)
 
-- Python 3.13.11 in the local .venv: 162 pytest tests pass; Ruff passes.
-  Existing Topic 1-3 tests remain passing. git diff --check passes.
-- Complete unchanged source/feature history validated: 29,567 candles,
-  29,311 feature observations, 60 finite ant columns, exact UTC alignment,
-  matching source SHA-256 and simulation/encoding metadata. Partial exports,
-  invalid columns/timestamps, metadata mismatches, and input-overwrite paths
-  are rejected. Sixty sampled features reproduce across the entire period.
-- 22,914 valid four-hour labels; 6,393 forward-gap exclusions and four
-  unavailable final outcomes. Another 5,112 past-momentum gap exclusions and
-  four boundary purges leave 17,798 common eligible observations:
-  training 10,679, validation 3,558, test 3,561. Exact original/eligible dates
-  and counts are recorded in README.md and experiment metadata.
-- Both StandardScaler/logistic models fit the same training rows only and
-  remain frozen. Ant uses 60 features; raw input uses 256 original binary
-  states. Four-interval momentum uses five completed, consecutive closes.
-  All strategies use identical eligible dates, four-hour execution windows,
-  fixed one-ounce quantities, one position at a time, and zero costs.
-- Validation gross price-only P&L (USD): ant -211.655, momentum -387.864,
-  raw 372.207. Test: ant 161.969, momentum 1,475.739, raw -1,082.725.
-  Ant test accuracy/AUC: 51.81% / 0.52596; raw: 50.94% / 0.50495.
-  Ant test HOLD fraction: 77.42%. Ant underperforms momentum on test P&L.
-  Validation findings are weaker; no period sensitivity or real trading edge
-  is established. No parameters were tuned after observing test results.
-- Two complete historical reruns reproduce all five exports byte for byte.
-  Independent label, execution, position-state, equity, P&L, metric-count,
-  shared-date, and partition-cutoff checks pass. Exports contain 7,119 signal
-  rows, 4,526 trades across six strategy/partition combinations, and 4,532
-  equity rows including six zero baselines. Strict JSON contains no NaN/Inf
-  numeric values; undefined metrics are explicit nulls or infinity strings.
-- Streamlit passes AppTest and starts with HTTP 200 / health=ok. Its test
-  server was stopped. Local results/topic4_validation.json records hashes
-  and reconciliation checks; generated files remain ignored by Git.
-- README, SPEC, configuration, and scaffold status are updated. No simulation
-  or encoding change, new dependency, live trading, broker integration, or
-  full dashboard was added. Implementation 556bb79 is committed and pushed to
-  origin/main. Topic 4 is complete. Topic 5 can proceed; no manual action remains.
-
-## Topic 5: Dashboard, Visualization & Final Integration
-
-- [x] Update approved dashboard specification.
-- [x] Inspect existing research output schemas.
-- [x] Implement dashboard data loading.
-- [x] Implement missing-data handling.
-- [x] Implement ant simulation replay.
-- [x] Implement gold candlestick chart.
-- [x] Implement signal markers.
-- [x] Implement executed trade visualization.
-- [x] Implement strategy performance charts.
-- [x] Implement validation/test selection.
-- [x] Implement trade and signal tables.
-- [x] Implement metadata and research disclaimers.
-- [x] Implement caching where appropriate.
-- [x] Add automated tests.
-- [x] Verify dashboard against actual historical outputs.
-- [x] Run full regression tests.
-- [x] Update README.
-- [x] Complete final integration verification.
-- [x] Commit and push changes (1adba1f, verified on origin/main).
-
-### Topic 5 verification (2026-10-23)
-
-- Local Python 3.13.11: 203 pytest tests pass; Ruff and git diff --check pass.
-  All Topic 1–4 tests remain passing. A fresh Python 3.13 virtual environment
-  installed .[dev] successfully, passed pip check, all 203 tests, and Ruff.
-- The read-only dashboard has exactly three primary tabs. It uses configured
-  paths, UTC timestamps, strict schemas, input/result SHA-256 identities,
-  complete feature metadata, partition counts/boundaries, and the existing
-  predictive/trading metric functions. Missing, malformed, duplicate, stale,
-  partial, or mixed outputs produce recovery instructions. Empty trade files
-  preserve zero baselines and undefined metrics; no results are fabricated.
-- Actual history loads: 29,567 candles, 29,311 feature rows, 7,119 predictions,
-  4,526 completed trades, and 4,532 equity rows. All six strategy/partition
-  chart views reconcile with the stored metrics. The four Topic 4 result files
-  remain byte-identical to their approved hashes. Only experiment metadata
-  adds result hashes; source CSV and both feature files remain unchanged.
-- Sixty real historical windows spanning the complete period reproduce every
-  saved checkpoint. Replay derives states from recorded trajectories, including
-  step zero, intermediate steps, all wrapped edges, and step 2,048. The existing
-  grid CLI still generates 29,311 grids; the feature CLI reproduces 100 windows
-  at a separate local output path. Two full backtest reruns reproduce all five
-  exports byte for byte. No model, encoding, trading rule, or setting changed.
-- Streamlit AppTest exercises timestamps, replay step 137, checkpoint 2,048,
-  both partition selectors, date ranges, incomplete date selection, and missing
-  files. HTTP 200 and health=ok pass. Actual headless Chromium interaction
-  exercises all tabs, saved prediction selection, steps 0/1/512/2,048, all
-  strategies, both partitions, and equity reconciliation. Screenshots were
-  inspected; browser JavaScript errors are absent. Plotly retains UTC timestamps.
-- Measured full-data cold loader: 3.410 seconds. Cached AppTest slider rerun:
-  0.269 seconds. Browser checkpoint jump sample: 0.405 seconds. These are local
-  samples, not guaranteed latency. Loading/replay caches are bounded and
-  invalidated by file changes. Only the selected window is simulated.
-- README, SPEC, and TASKS describe the local workflow, controls, metadata
-  upgrade, and limitations. No new dependency, live feed, broker connection,
-  automatic training, database, or cloud deployment was added. Optional
-  automatic playback and extra comparison charts were omitted for simplicity.
-- Local ignored evidence: results/topic5_validation.json,
-  results/topic5_browser_validation.json, replay/gold/comparison screenshots,
-  and verification scripts. No manual data or verification blocker remains.
-  Implementation 1adba1f is committed and pushed to origin/main.
-  AntTrader v1 is complete and verified.
+- Before refactoring: local Python 3.13.11, 203 pytest tests pass; Ruff passes.
+- After refactoring: 192 applicable pytest tests pass in 32.29 seconds. Ruff and
+  git diff --check pass. Trading tests were removed with their deleted code;
+  predictive metric tests were retained and extended.
+- Full signal stage validates 29,567 candles and 29,311 feature rows. Its 7,119
+  saved predictions retain 3,558 validation and 3,561 test rows. Both models'
+  probabilities, all three classifications, decisions, partitions, targets, and
+  forecast returns match the pre-refactor CSV exactly. Maximum probability
+  difference is 0.0. A second signal run reproduces all three outputs byte for byte.
+- Source CSV, feature CSV/metadata, grid, simulation, and feature-code SHA-256
+  hashes are unchanged. Model fitting, inference, threshold decoding, historical
+  input construction, splitting, and feature validation functions are AST-identical
+  to their pre-refactor versions. No model settings or thresholds were changed.
+- Dashboard tests pass without trade/equity files. Legacy files do not affect
+  loading or cache identity. Dashboard loading is tested with model fitting
+  disabled. Strict signal schemas/hashes, eligible timestamps, label boundaries,
+  momentum, reference prices, predictive metrics, and exclusions are reconciled.
+- Browser verification passes: exactly two tabs, validation/test separation,
+  BUY-only filtering, replay step 2,048, readable 800-pixel candles and 16-pixel
+  BUY/SELL markers, and correct UTC/probability/reference/partition hover data.
+  Both observed hover records match the saved signals. No browser errors were
+  reported. Streamlit starts and its health endpoint returns ok.
+- Future-candle changes cannot change earlier grids, features, model inputs, or
+  marker coordinates. Automated checks preserve threshold and boundary behavior.
+- Local ignored evidence: results/signals_refactor_validation.json,
+  results/signals.before_refactor.csv, results/signals_refactor_baseline.json,
+  results/signals_refactor_gold.png, and results/signals_refactor_hover.png.
+- No dependency, infrastructure, model optimization, or new research rule was
+  added. No implementation or verification blocker remains. The user approved
+  committing and pushing the verified implementation.

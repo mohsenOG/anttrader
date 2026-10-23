@@ -25,7 +25,7 @@ simulation:
   reset_each_window: true
 feature_output: results/ant_features.csv
 
-# Approved Topic 4 historical research settings; all trading costs are zero.
+# Historical signal research; the horizon is used only for forecast labels.
 decoder: logistic_regression
 prediction_horizon_bars: 4
 standard_scaler: true
@@ -39,12 +39,7 @@ sell_threshold: 0.45
 train_fraction: 0.60
 validation_fraction: 0.20
 test_fraction: 0.20
-position_quantity_ounces: 1.0
-maximum_concurrent_positions: 1
-holding_period_bars: 4
 momentum_lookback_bars: 4
 signal_output: results/signals.csv
-trade_output: results/trades.csv
-equity_output: results/equity.csv
 metrics_output: results/metrics.json
 experiment_metadata_output: results/experiment.metadata.json

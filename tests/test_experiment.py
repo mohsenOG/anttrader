@@ -49,12 +49,12 @@ def test_pipeline_outputs_shared_dates_rules_counts_and_reproducibility(
 
     monkeypatch.setattr("anttrader.experiment.fit_decoder", checked_fit)
     path, settings, candles, _source = exported_history
-    main(path, stage="backtest")
+    main(path, stage="signals")
     outputs = [path.parent / settings[key] for key in OUTPUT_KEYS]
     first = [output.read_bytes() for output in outputs]
-    signals, trades, equity = [pd.read_csv(output) for output in outputs[:3]]
+    signals = pd.read_csv(outputs[0])
     metrics, metadata = [
-        json.loads(output.read_text(encoding="utf-8")) for output in outputs[3:]
+        json.loads(output.read_text(encoding="utf-8")) for output in outputs[1:]
     ]
     assert len(fitted) == 2
     pd.testing.assert_index_equal(fitted[0][0].index, fitted[1][0].index)
@@ -82,7 +82,7 @@ def test_pipeline_outputs_shared_dates_rules_counts_and_reproducibility(
     )
     for partition in ("train", "validation"):
         info = metadata["partitions"][partition]
-        assert pd.Timestamp(info["latest_eligible_exit"]) < pd.Timestamp(
+        assert pd.Timestamp(info["latest_eligible_label_end"]) < pd.Timestamp(
             info["exclusive_outcome_cutoff"]
         )
     for partition in ("validation", "test"):
@@ -95,37 +95,18 @@ def test_pipeline_outputs_shared_dates_rules_counts_and_reproducibility(
             assert sum(result["predictive"]["signal_counts"].values()) == len(
                 expected_dates
             )
-            completed = trades.loc[
-                trades.partition.eq(partition) & trades.strategy.eq(strategy)
-            ]
-            curve = equity.loc[
-                equity.partition.eq(partition) & equity.strategy.eq(strategy)
-            ]
-            assert completed.decision_timestamp.is_unique
-            assert completed.decision_timestamp.isin(expected_dates).all()
-            assert len(completed) == result["trading"]["completed_trades"]
-            assert curve.cumulative_gross_pnl_usd.iloc[0] == 0
-            assert curve.cumulative_gross_pnl_usd.iloc[-1] == pytest.approx(
-                completed.gross_pnl_usd.sum()
-            )
-            assert completed.gross_pnl_usd.sum() == pytest.approx(
-                result["trading"]["total_gross_pnl_usd"]
-            )
-            if len(completed):
-                duration = pd.to_datetime(completed.exit_timestamp) - pd.to_datetime(
-                    completed.entry_timestamp
-                )
-                assert duration.eq(pd.Timedelta(hours=4)).all()
-                assert completed.quantity_ounces.eq(1).all()
-                np.testing.assert_allclose(
-                    completed.gross_pnl_usd,
-                    completed.direction
-                    * (completed.exit_price - completed.entry_price),
-                )
-    main(path, stage="backtest")
+            assert set(result) == {"predictive"}
+    assert not (path.parent / "results/trades.csv").exists()
+    assert not (path.parent / "results/equity.csv").exists()
+    assert not any("entry" in col or "exit" in col for col in signals)
+    reference = candles.set_index("timestamp").close.reindex(
+        pd.to_datetime(signals.decision_timestamp) - pd.Timedelta(hours=1)
+    )
+    np.testing.assert_array_equal(signals.reference_price, reference)
+    main(path, stage="signals")
     assert [output.read_bytes() for output in outputs] == first
     with pytest.raises(SystemExit, match="features"):
-        main(path, stage="backtest", limit=10)
+        main(path, stage="signals", limit=10)
 
 
 @pytest.mark.parametrize(
@@ -172,10 +153,10 @@ def test_bad_feature_metadata_or_data_is_rejected(exported_history, change):
 
 def test_output_paths_cannot_overwrite_inputs_or_each_other(exported_history):
     path, settings, _, source = exported_history
-    for output in ("historical_csv", "feature_output", "trade_output"):
+    for output in ("historical_csv", "feature_output", "metrics_output"):
         altered = {**settings, "signal_output": settings[output]}
         path.write_text(yaml.safe_dump(altered), encoding="utf-8")
         before = source.read_bytes()
         with pytest.raises(SystemExit, match="must be distinct"):
-            main(path, stage="backtest")
+            main(path, stage="signals")
         assert source.read_bytes() == before

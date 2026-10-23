@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -47,19 +48,6 @@ def validate_research_config(config: dict) -> None:
     horizon = config["prediction_horizon_bars"]
     if type(horizon) is not int or horizon < 1:
         raise ValueError("prediction_horizon_bars must be a positive integer.")
-    if (
-        type(config["holding_period_bars"]) is not int
-        or config["holding_period_bars"] != horizon
-    ):
-        raise ValueError("holding_period_bars must equal prediction_horizon_bars.")
-    if (
-        type(config["maximum_concurrent_positions"]) is not int
-        or config["maximum_concurrent_positions"] != 1
-    ):
-        raise ValueError("maximum_concurrent_positions must be 1.")
-    quantity = config["position_quantity_ounces"]
-    if isinstance(quantity, bool) or not np.isfinite(quantity) or quantity <= 0:
-        raise ValueError("position_quantity_ounces must be finite and positive.")
     if (
         type(config["momentum_lookback_bars"]) is not int
         or config["momentum_lookback_bars"] < 1
@@ -148,7 +136,7 @@ def load_feature_dataset(
 
 
 def future_targets(candles: pd.DataFrame, decisions, horizon: int = 4) -> pd.DataFrame:
-    """Require each opening from the observed candle through entry and exit."""
+    """Build retrospective labels; require consecutive hours through the horizon."""
     if type(horizon) is not int or horizon < 1:
         raise ValueError("horizon must be a positive integer.")
     times = decision_times(decisions)
@@ -160,18 +148,18 @@ def future_targets(candles: pd.DataFrame, decisions, horizon: int = 4) -> pd.Dat
     valid = np.ones(len(times), dtype=bool)
     for offset in range(-1, horizon + 1):
         valid &= prices.index.get_indexer(times + offset * HOUR) >= 0
-    entry = prices.reindex(times).to_numpy()
-    exits = times + horizon * HOUR
-    exit_price = prices.reindex(exits).to_numpy()
+    start_price = prices.reindex(times).to_numpy()
+    ends = times + horizon * HOUR
+    label_end_price = prices.reindex(ends).to_numpy()
     returns = np.full(len(times), np.nan)
-    returns[valid] = log_returns_pairs(entry[valid], exit_price[valid])
+    returns[valid] = log_returns_pairs(start_price[valid], label_end_price[valid])
     result = pd.DataFrame(
         {
             "decision_timestamp": times,
-            "entry_timestamp": times,
-            "entry_price": entry,
-            "exit_timestamp": exits,
-            "exit_price": exit_price,
+            "label_start_timestamp": times,
+            "label_start_price": start_price,
+            "label_end_timestamp": ends,
+            "label_end_price": label_end_price,
             "future_return": returns,
             "target": pd.array(np.where(valid, returns > 0, None), dtype="Int64"),
             "target_valid": valid,
@@ -179,19 +167,17 @@ def future_targets(candles: pd.DataFrame, decisions, horizon: int = 4) -> pd.Dat
     )
     # Missing hours inside observed history are gaps; the final horizon is unavailable.
     result["target_exclusion"] = np.where(
-        valid, "", np.where(exits > prices.index[-1], "unavailable_tail", "market_gap")
+        valid, "", np.where(ends > prices.index[-1], "unavailable_tail", "market_gap")
     )
     return result
 
 
-def log_returns_pairs(entry: np.ndarray, exit_price: np.ndarray) -> np.ndarray:
+def log_returns_pairs(start_price: np.ndarray, end_price: np.ndarray) -> np.ndarray:
     with np.errstate(over="raise", under="raise", divide="raise", invalid="raise"):
         try:
-            return np.log(exit_price / entry)
+            return np.log(end_price / start_price)
         except FloatingPointError as exc:
-            raise ValueError(
-                "Entry-to-exit ratio exceeds the numerical range."
-            ) from exc
+            raise ValueError("Price ratio exceeds the numerical range.") from exc
 
 
 def chronological_partitions(
@@ -296,3 +282,53 @@ def decode_signals(
     ):
         raise ValueError("Probabilities must be finite and in [0, 1].")
     return np.where(values >= buy, "BUY", np.where(values <= sell, "SELL", "HOLD"))
+
+
+def predictive_metrics(targets, signals, probabilities=None) -> dict:
+    labels = np.asarray(targets, dtype=int)
+    signals = np.asarray(signals)
+    count = len(labels)
+    result = {
+        "valid_observations": count,
+        "signal_counts": {
+            name: int((signals == name).sum()) for name in ("BUY", "SELL", "HOLD")
+        },
+        "signal_fractions": {
+            name: float((signals == name).mean()) if count else None
+            for name in ("BUY", "SELL", "HOLD")
+        },
+    }
+    if probabilities is None:
+        active = signals != "HOLD"
+        accuracy = (
+            float(accuracy_score(labels[active], signals[active] == "BUY"))
+            if active.any()
+            else None
+        )
+        auc, note = None, "momentum has no probability estimate"
+        scope = "non-HOLD momentum observations"
+    else:
+        values = np.asarray(probabilities, dtype=float)
+        accuracy = float(accuracy_score(labels, values >= 0.5)) if count else None
+        defined = len(np.unique(labels)) == 2
+        auc = float(roc_auc_score(labels, values)) if defined else None
+        note = None if defined else "ROC AUC requires both target classes"
+        scope = "all eligible observations; probability >= 0.5 predicts up"
+    actionable = signals != "HOLD"
+    result.update(
+        actionable_observations=int(actionable.sum()),
+        actionable_accuracy=float(
+            accuracy_score(labels[actionable], signals[actionable] == "BUY")
+        )
+        if actionable.any()
+        else None,
+        actionable_accuracy_scope="BUY/SELL observations only; BUY predicts up, SELL predicts non-up",
+        actionable_accuracy_note=None
+        if actionable.any()
+        else "no BUY/SELL observations",
+        directional_accuracy=accuracy,
+        accuracy_scope=scope,
+        roc_auc=auc,
+        roc_auc_note=note,
+    )
+    return result

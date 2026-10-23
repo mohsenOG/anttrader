@@ -12,7 +12,7 @@
 - Read AGENTS.md, SPEC.md, and TASKS.md.
 - Understand the relevant existing code and callers before changing behavior.
 - Ask the user about important unresolved design decisions.
-- Do not invent missing trading rules or scientific assumptions.
+- Do not invent missing prediction rules or scientific assumptions.
 - Make minimal, in-scope changes. Reuse existing code and standard library features.
 
 ## Python development
@@ -28,10 +28,10 @@
 - Never introduce look-ahead bias.
 - Use only market data available at the signal timestamp.
 - Preserve chronological separation between training and testing.
-- Account for trading costs when implementing backtests.
+- Keep the four-hour horizon for forecast labels only. Never simulate trades.
 - Make experiments reproducible.
 - Never fabricate research results or performance metrics.
-- Do not claim that the strategy is profitable without verified evidence.
+- Treat BUY and SELL as predictions. Historical accuracy does not prove profitability.
 - Keep the project limited to historical research unless the user approves a change.
 
 ## Testing

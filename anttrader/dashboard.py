@@ -9,17 +9,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import yaml
 
-from anttrader.backtest import (
-    EQUITY_COLUMNS,
-    TRADE_COLUMNS,
-    predictive_metrics,
-    trading_metrics,
-)
 from anttrader.data import HOUR, load_gold_data, utc_timestamp
 from anttrader.decoder import (
+    chronological_partitions,
     decode_signals,
     future_targets,
+    historical_inputs,
     load_feature_dataset,
+    predictive_metrics,
     sha256,
     validate_research_config,
 )
@@ -40,19 +37,19 @@ STRATEGY_NAMES = {
     "momentum": "Momentum",
     "raw": "Raw-input logistic regression",
 }
-COLORS = {"ant": "#d39b28", "momentum": "#3182ce", "raw": "#9867c5"}
 SIGNAL_COLORS = {"BUY": "#16865d", "SELL": "#d64550"}
 PARTITIONS = ("test", "validation")
 SIGNAL_COLUMNS = [
     "decision_timestamp",
-    "entry_timestamp",
-    "entry_price",
-    "exit_timestamp",
-    "exit_price",
+    "label_start_timestamp",
+    "label_start_price",
+    "label_end_timestamp",
+    "label_end_price",
     "future_return",
     "target",
     "target_valid",
     "target_exclusion",
+    "reference_price",
     "partition",
     "momentum_signal",
     "ant_p_up",
@@ -61,14 +58,13 @@ SIGNAL_COLUMNS = [
     "raw_signal",
 ]
 DISCLAIMER = (
-    "All backtest P&L represents theoretical price-only performance. Spread, "
-    "slippage, commissions, financing, and execution latency are not modeled. "
-    "Historical results do not establish a profitable live trading strategy."
+    "AntTrader is a signal research tool, not a trade simulator. "
+    "BUY and SELL are directional predictions. Historical accuracy does not establish profitability."
 )
 RECOVERY = (
     "Restore the configured Dukascopy CSV using README.md: Market data if needed. "
     "Generate complete features with python -m anttrader.pipeline --stage features "
-    "(without --limit), then run python -m anttrader.pipeline --stage backtest."
+    "(without --limit), then run python -m anttrader.pipeline --stage signals."
 )
 
 
@@ -78,8 +74,6 @@ class ResearchData:
     candles: pd.DataFrame
     features: pd.DataFrame
     signals: pd.DataFrame
-    trades: pd.DataFrame
-    equity: pd.DataFrame
     metrics: dict
     metadata: dict
 
@@ -115,9 +109,9 @@ def input_signature(config_path: Path = DEFAULT_CONFIG) -> tuple:
 def _csv(path: Path, columns: list[str]) -> pd.DataFrame:
     frame = pd.read_csv(path)
     missing = set(columns) - set(frame)
-    if missing:
+    if list(frame) != columns:
         raise ValueError(
-            f"{path}: missing required columns: {', '.join(sorted(missing))}."
+            f"{path}: invalid signal columns; missing: {', '.join(sorted(missing))}."
         )
     return frame
 
@@ -141,7 +135,7 @@ def _times(frame: pd.DataFrame, column: str, keys: list[str]) -> None:
 def _metrics_match(stored: dict, expected: dict) -> None:
     """Reconcile with the same functions used by the exporter."""
     if not isinstance(stored, dict) or stored.keys() != expected.keys():
-        raise ValueError("Stored metric schema does not match the backtester.")
+        raise ValueError("Stored metric schema does not match the signal experiment.")
     for key, value in expected.items():
         actual = stored[key]
         if isinstance(value, dict):
@@ -173,6 +167,10 @@ def load_research(config_path: Path = DEFAULT_CONFIG) -> ResearchData:
             if not path.is_file():
                 raise ValueError(f"Required file missing: {path}.")
         metadata = _json(paths["experiment_metadata_output"])
+        if metadata.get("schema") != "signals-only-v1":
+            raise ValueError(
+                "Signal-only metadata required; regenerate with --stage signals."
+            )
         feature_metadata = _json(feature_meta_path)
         if not all(
             isinstance(feature_metadata.get(key), dict)
@@ -206,7 +204,7 @@ def load_research(config_path: Path = DEFAULT_CONFIG) -> ResearchData:
                 raise ValueError(
                     f"{path}: missing or mismatched experiment output SHA-256. "
                     "Regenerate the result bundle with "
-                    "python -m anttrader.pipeline --stage backtest."
+                    "python -m anttrader.pipeline --stage signals."
                 )
         candles = load_gold_data(
             paths["historical_csv"],
@@ -225,69 +223,80 @@ def load_research(config_path: Path = DEFAULT_CONFIG) -> ResearchData:
         ):
             raise ValueError("Experiment history count/cutoff mismatch.")
         signals = _csv(paths["signal_output"], SIGNAL_COLUMNS)
-        trades = _csv(paths["trade_output"], [*TRADE_COLUMNS, "partition", "strategy"])
-        equity = _csv(
-            paths["equity_output"], [*EQUITY_COLUMNS, "partition", "strategy"]
-        )
-        for column in ("decision_timestamp", "entry_timestamp", "exit_timestamp"):
+        for column in (
+            "decision_timestamp",
+            "label_start_timestamp",
+            "label_end_timestamp",
+        ):
             _times(signals, column, [])
-            _times(trades, column, ["partition", "strategy"])
-        _times(equity, "timestamp", ["partition", "strategy"])
         if signals.empty or set(signals.partition) != set(PARTITIONS):
             raise ValueError("Complete validation and test signals are required.")
-        for frame in (trades, equity):
-            if (
-                not frame.partition.isin(PARTITIONS).all()
-                or not frame.strategy.isin(STRATEGIES).all()
-            ):
-                raise ValueError("Unknown result strategy or partition.")
-        for frame, columns in (
-            (
-                signals,
-                [
-                    "entry_price",
-                    "exit_price",
-                    "future_return",
-                    "target",
-                    "ant_p_up",
-                    "raw_p_up",
-                ],
-            ),
-            (
-                trades,
-                [
-                    "entry_price",
-                    "exit_price",
-                    "direction",
-                    "quantity_ounces",
-                    "holding_period_bars",
-                    "gross_pnl_usd",
-                ],
-            ),
-            (equity, ["cumulative_gross_pnl_usd"]),
-        ):
-            frame[columns] = frame[columns].astype(float)
-            if not np.isfinite(frame[columns].to_numpy(dtype=float)).all():
-                raise ValueError(f"Missing or nonfinite result values in {columns}.")
-        if not signals.decision_timestamp.isin(features.decision_timestamp).all():
-            raise ValueError("Signal timestamps do not match saved feature windows.")
-        expected_targets = future_targets(
-            candles, signals.decision_timestamp, config["prediction_horizon_bars"]
+        numeric = [
+            "label_start_price",
+            "label_end_price",
+            "future_return",
+            "target",
+            "reference_price",
+            "ant_p_up",
+            "raw_p_up",
+        ]
+        signals[numeric] = signals[numeric].astype(float)
+        if not np.isfinite(signals[numeric].to_numpy()).all():
+            raise ValueError("Missing or nonfinite signal values.")
+        splits, boundaries = chronological_partitions(
+            features.decision_timestamp,
+            config["train_fraction"],
+            config["validation_fraction"],
         )
-        for column in ("entry_timestamp", "exit_timestamp", "target_valid"):
+        targets = future_targets(
+            candles, features.decision_timestamp, config["prediction_horizon_bars"]
+        )
+        _, momentum, momentum_valid = historical_inputs(
+            candles, features.decision_timestamp, config["momentum_lookback_bars"]
+        )
+        boundary_valid = splits.outcome_cutoff.isna() | targets.label_end_timestamp.lt(
+            splits.outcome_cutoff
+        )
+        eligible = targets.target_valid & momentum_valid & boundary_valid
+        evaluation = eligible & splits.partition.ne("train")
+        expected_targets = targets.loc[evaluation].reset_index(drop=True)
+        if not pd.DatetimeIndex(signals.decision_timestamp).equals(
+            pd.DatetimeIndex(expected_targets.decision_timestamp)
+        ):
+            raise ValueError("Incomplete or incompatible signal timestamps.")
+        for column in ("label_start_timestamp", "label_end_timestamp", "target_valid"):
             if not signals[column].eq(expected_targets[column]).all():
                 raise ValueError(f"Signal {column} mismatch with historical candles.")
-        for column in ("entry_price", "exit_price", "future_return", "target"):
+        for column in (
+            "label_start_price",
+            "label_end_price",
+            "future_return",
+            "target",
+        ):
             if not np.allclose(
-                signals[column].to_numpy(dtype=float),
+                signals[column],
                 expected_targets[column].to_numpy(dtype=float),
                 rtol=1e-10,
                 atol=1e-10,
-                equal_nan=False,
             ):
                 raise ValueError(f"Signal {column} mismatch with historical candles.")
-        if not signals.target_valid.eq(True).all():
-            raise ValueError("Signals contain unavailable future outcomes.")
+        reference = (
+            candles.set_index("timestamp")
+            .close.reindex(pd.DatetimeIndex(signals.decision_timestamp) - HOUR)
+            .to_numpy()
+        )
+        if not np.allclose(signals.reference_price, reference, rtol=1e-10, atol=1e-10):
+            raise ValueError(
+                "Signal reference price differs from the last completed candle."
+            )
+        if (
+            not signals.target_exclusion.astype("string").fillna("").eq("").all()
+            or not signals.partition.eq(
+                splits.loc[evaluation, "partition"].to_numpy()
+            ).all()
+            or not signals.momentum_signal.eq(momentum.loc[evaluation].to_numpy()).all()
+        ):
+            raise ValueError("Signal partition, momentum, or label exclusion mismatch.")
         for strategy in STRATEGIES:
             if not signals[f"{strategy}_signal"].isin(["BUY", "SELL", "HOLD"]).all():
                 raise ValueError(f"Invalid {strategy} signal.")
@@ -301,118 +310,67 @@ def load_research(config_path: Path = DEFAULT_CONFIG) -> ResearchData:
                     raise ValueError(
                         f"{strategy} signals do not match saved probabilities."
                     )
+        for partition, boundary in boundaries.items():
+            selected = eligible & splits.partition.eq(partition)
+            times = features.loc[selected, "decision_timestamp"]
+            boundary.update(
+                eligible_rows=int(selected.sum()),
+                first_eligible_decision=times.iloc[0].isoformat(),
+                last_eligible_decision=times.iloc[-1].isoformat(),
+                latest_eligible_label_end=targets.loc[selected, "label_end_timestamp"]
+                .iloc[-1]
+                .isoformat(),
+                boundary_purged_rows=int(
+                    (
+                        splits.partition.eq(partition)
+                        & targets.target_valid
+                        & momentum_valid
+                        & ~boundary_valid
+                    ).sum()
+                ),
+            )
+        counts = {
+            "valid_target_labels": int(targets.target_valid.sum()),
+            "excluded_market_gap": int(targets.target_exclusion.eq("market_gap").sum()),
+            "excluded_unavailable_tail": int(
+                targets.target_exclusion.eq("unavailable_tail").sum()
+            ),
+            "excluded_momentum_gap_after_labeling": int(
+                (targets.target_valid & ~momentum_valid).sum()
+            ),
+            "excluded_boundary_after_intersection": int(
+                (targets.target_valid & momentum_valid & ~boundary_valid).sum()
+            ),
+            "shared_eligible_observations": int(eligible.sum()),
+        }
+        if metadata["partitions"] != boundaries or any(
+            metadata[key] != value for key, value in counts.items()
+        ):
+            raise ValueError(
+                "Experiment partition boundaries/counts or exclusions mismatch."
+            )
         metrics = _json(paths["metrics_output"])
-        if metrics["pnl_basis"] != metadata["pnl_basis"]:
-            raise ValueError("Metric P&L basis differs from experiment metadata.")
+        expected_metrics = {"partitions": {}}
         for partition in PARTITIONS:
             selected = signals.loc[signals.partition.eq(partition)]
-            info = metadata["partitions"][partition]
-            if (
-                len(selected) != info["eligible_rows"]
-                or selected.decision_timestamp.iloc[0]
-                != utc_timestamp(info["first_eligible_decision"])
-                or selected.decision_timestamp.iloc[-1]
-                != utc_timestamp(info["last_eligible_decision"])
-                or selected.exit_timestamp.iloc[-1]
-                != utc_timestamp(info["latest_eligible_exit"])
-                or selected.decision_timestamp.min()
-                < utc_timestamp(info["first_decision"])
-                or selected.decision_timestamp.max()
-                > utc_timestamp(info["last_decision"])
-            ):
-                raise ValueError(f"Incomplete or incompatible {partition} signals.")
-            cutoff = info["exclusive_outcome_cutoff"]
-            if cutoff and not selected.exit_timestamp.lt(utc_timestamp(cutoff)).all():
-                raise ValueError(f"{partition} outcomes cross the partition boundary.")
-            for strategy in STRATEGIES:
-                completed = trades.loc[
-                    trades.partition.eq(partition) & trades.strategy.eq(strategy)
-                ]
-                curve = equity.loc[
-                    equity.partition.eq(partition) & equity.strategy.eq(strategy)
-                ]
-                if not completed.decision_timestamp.isin(
-                    selected.decision_timestamp
-                ).all():
-                    raise ValueError("Trade decision absent from saved predictions.")
-                matched = selected.set_index("decision_timestamp").reindex(
-                    completed.decision_timestamp
-                )
-                for column in ("entry_timestamp", "exit_timestamp"):
-                    if not np.array_equal(completed[column], matched[column]):
-                        raise ValueError(f"Trade {column} differs from saved signals.")
-                for column in ("entry_price", "exit_price"):
-                    if not np.allclose(completed[column], matched[column]):
-                        raise ValueError(f"Trade {column} differs from saved signals.")
-                if (
-                    not completed.signal.isin(["BUY", "SELL"]).all()
-                    or not np.array_equal(
-                        completed.signal, matched[f"{strategy}_signal"]
-                    )
-                    or not completed.direction.eq(
-                        np.where(completed.signal.eq("BUY"), 1, -1)
-                    ).all()
-                    or not completed.quantity_ounces.eq(
-                        config["position_quantity_ounces"]
-                    ).all()
-                    or not completed.holding_period_bars.eq(
-                        config["holding_period_bars"]
-                    ).all()
-                    or not np.allclose(
-                        completed.gross_pnl_usd,
-                        completed.direction
-                        * (completed.exit_price - completed.entry_price)
-                        * completed.quantity_ounces,
-                    )
-                ):
-                    raise ValueError(
-                        "Trade direction, quantity, holding period, or P&L mismatch."
-                    )
-                if strategy == "momentum":
-                    if completed.p_up.notna().any():
-                        raise ValueError(
-                            "Momentum trades cannot have model probabilities."
-                        )
-                elif not np.allclose(
-                    completed.p_up.to_numpy(dtype=float), matched[f"{strategy}_p_up"]
-                ):
-                    raise ValueError(
-                        "Trade probability differs from saved predictions."
-                    )
-                if (
-                    len(completed) > 1
-                    and (
-                        completed.entry_timestamp.iloc[1:].to_numpy()
-                        < completed.exit_timestamp.iloc[:-1].to_numpy()
-                    ).any()
-                ):
-                    raise ValueError("Overlapping positions in saved trades.")
-                expected_times = pd.DatetimeIndex(
-                    [selected.decision_timestamp.iloc[0], *completed.exit_timestamp]
-                )
-                if not pd.DatetimeIndex(curve.timestamp).equals(expected_times):
-                    raise ValueError(
-                        "Equity timestamps/baseline do not match completed trades."
-                    )
-                stored = metrics["partitions"][partition][strategy]
-                _metrics_match(stored["trading"], trading_metrics(completed, curve))
-                _metrics_match(
-                    stored["predictive"],
-                    predictive_metrics(
+            expected_metrics["partitions"][partition] = {
+                strategy: {
+                    "predictive": predictive_metrics(
                         selected.target,
                         selected[f"{strategy}_signal"],
                         None
                         if strategy == "momentum"
                         else selected[f"{strategy}_p_up"],
-                    ),
-                )
+                    )
+                }
+                for strategy in STRATEGIES
+            }
+        _metrics_match(metrics, expected_metrics)
         if input_signature(config_path) != signature:
             raise ValueError(
                 "Research files changed while loading. Reload after the CLI finishes."
             )
-        return ResearchData(
-            config, candles, features, signals, trades, equity, metrics, metadata
-        )
+        return ResearchData(config, candles, features, signals, metrics, metadata)
     except (
         ValueError,
         KeyError,
@@ -544,115 +502,107 @@ def grid_chart(grid: np.ndarray, state: Checkpoint | None, title: str) -> go.Fig
 def price_chart(
     candles: pd.DataFrame,
     signals: pd.DataFrame,
-    trades: pd.DataFrame,
     strategy: str,
     partition: str,
+    *,
+    visible_sides: tuple[str, ...] = ("BUY", "SELL"),
+    start: pd.Timestamp | None = None,
+    stop: pd.Timestamp | None = None,
 ) -> go.Figure:
+    # Resolve references before display filtering, including the preceding boundary candle.
+    signals = signals.loc[signals.partition.eq(partition)]
+    if start is not None:
+        signals = signals.loc[signals.decision_timestamp.ge(start)]
+    if stop is not None:
+        signals = signals.loc[signals.decision_timestamp.lt(stop)]
+    observed = candles.set_index("timestamp").reindex(
+        pd.DatetimeIndex(signals.decision_timestamp) - HOUR
+    )
+    if observed[["high", "low", "close"]].isna().any().any():
+        raise ValueError("Signal markers require the last completed candle.")
+    displayed = candles
+    if start is not None:
+        displayed = displayed.loc[displayed.timestamp.ge(start)]
+    if stop is not None:
+        displayed = displayed.loc[displayed.timestamp.lt(stop)]
     figure = go.Figure(
         go.Candlestick(
-            x=candles.timestamp.tolist(),
-            open=candles.open,
-            high=candles.high,
-            low=candles.low,
-            close=candles.close,
+            x=displayed.timestamp.tolist(),
+            open=displayed.open,
+            high=displayed.high,
+            low=displayed.low,
+            close=displayed.close,
             name="XAU/USD bid OHLC",
             increasing_line_color="#16865d",
             decreasing_line_color="#d64550",
         )
     )
+    offset = np.maximum(
+        (observed.high - observed.low).to_numpy() * 0.15,
+        observed.close.to_numpy() * 0.0008,
+    )
     for signal, symbol in (("BUY", "triangle-up"), ("SELL", "triangle-down")):
-        predictions = signals.loc[
-            signals[f"{strategy}_signal"].eq(signal)
-            & signals.decision_timestamp.isin(candles.timestamp)
-        ]
+        if signal not in visible_sides:
+            continue
+        mask = signals[f"{strategy}_signal"].eq(signal).to_numpy()
+        predictions = signals.loc[mask]
+        levels = (
+            observed.low.to_numpy() - offset
+            if signal == "BUY"
+            else observed.high.to_numpy() + offset
+        )
+        probability = (
+            ["Unavailable (momentum)"] * len(predictions)
+            if strategy == "momentum"
+            else [f"{value:.4f}" for value in predictions[f"{strategy}_p_up"]]
+        )
         figure.add_trace(
             go.Scatter(
                 x=predictions.decision_timestamp.tolist(),
-                y=predictions.entry_price,
+                y=levels[mask],
                 mode="markers",
                 name=f"{signal} prediction",
-                marker={"symbol": symbol, "size": 7, "color": SIGNAL_COLORS[signal]},
-                hovertemplate="%{x|%Y-%m-%d %H:%M} UTC<br>Decision reference: $%{y:.3f}"
-                "<extra>" + signal + " prediction</extra>",
-            )
-        )
-        entries = trades.loc[
-            trades.signal.eq(signal) & trades.entry_timestamp.isin(candles.timestamp)
-        ]
-        figure.add_trace(
-            go.Scatter(
-                x=entries.entry_timestamp.tolist(),
-                y=entries.entry_price,
-                mode="markers",
-                name=f"{signal} executed entry",
                 marker={
-                    "symbol": "diamond-open",
-                    "size": 14,
+                    "symbol": symbol,
+                    "size": 16,
                     "color": SIGNAL_COLORS[signal],
-                    "line": {"width": 2},
+                    "line": {"color": "#152536", "width": 1.5},
                 },
-                hovertemplate="%{x|%Y-%m-%d %H:%M} UTC<br>Entry: $%{y:.3f}"
-                "<extra>" + signal + " entry</extra>",
+                customdata=list(
+                    zip(
+                        probability,
+                        predictions.reference_price,
+                        predictions.partition,
+                        strict=True,
+                    )
+                ),
+                hovertemplate="Decision: %{x|%Y-%m-%d %H:%M} UTC<br>Signal: "
+                + signal
+                + "<br>P(up): %{customdata[0]}<br>Last completed close: $%{customdata[1]:.3f}"
+                "<br>Partition: %{customdata[2]}<extra></extra>",
             )
         )
-    exits = trades.loc[trades.exit_timestamp.isin(candles.timestamp)]
-    figure.add_trace(
-        go.Scatter(
-            x=exits.exit_timestamp.tolist(),
-            y=exits.exit_price,
-            mode="markers",
-            name="Completed exit",
-            marker={"symbol": "x", "size": 11, "color": "#64748b"},
-            customdata=exits[["gross_pnl_usd"]].to_numpy(),
-            hovertemplate="%{x|%Y-%m-%d %H:%M} UTC<br>Exit: $%{y:.3f}"
-            "<br>Gross P&L: $%{customdata[0]:.3f}<extra>Exit</extra>",
-        )
-    )
     figure.update_layout(
         title=f"XAU/USD 1H · {STRATEGY_NAMES[strategy]} · {partition.title()}",
-        height=570,
+        template="plotly_white",
+        height=800,
+        font={"size": 14},
         xaxis_title="Candle opening / decision time (UTC)",
-        yaxis_title="Bid reference price (USD / ounce)",
+        yaxis_title="Gold bid price (USD / ounce)",
         xaxis_rangeslider_visible=False,
-        legend={"orientation": "h", "y": 1.12},
-        margin={"l": 40, "r": 20, "t": 100, "b": 40},
+        dragmode="pan",
+        hovermode="closest",
+        legend={"orientation": "h", "y": 1.08},
+        margin={"l": 65, "r": 25, "t": 110, "b": 60},
     )
-    return figure
-
-
-def equity_chart(equity: pd.DataFrame, partition: str) -> go.Figure:
-    figure = go.Figure()
-    for strategy in STRATEGIES:
-        curve = equity.loc[
-            equity.partition.eq(partition) & equity.strategy.eq(strategy)
-        ]
-        figure.add_trace(
-            go.Scatter(
-                x=curve.timestamp.tolist(),
-                y=curve.cumulative_gross_pnl_usd,
-                mode="lines",
-                name=STRATEGY_NAMES[strategy],
-                line={"color": COLORS[strategy], "shape": "hv", "width": 2},
-                hovertemplate="%{x|%Y-%m-%d %H:%M} UTC<br>$%{y:.3f}<extra>%{fullData.name}</extra>",
-            )
-        )
-    figure.add_hline(y=0, line_dash="dot", line_color="#64748b")
-    figure.update_layout(
-        title=f"{partition.title()} · Cumulative realized gross P&L",
-        xaxis_title="Completed-trade timestamp (UTC)",
-        yaxis_title="Gross P&L (USD)",
-        height=480,
-        legend={"orientation": "h", "y": 1.12},
-        margin={"l": 40, "r": 20, "t": 90, "b": 40},
-    )
+    if start is not None and stop is not None:
+        figure.update_xaxes(range=[start, stop])
     return figure
 
 
 def format_metric(value, *, percent: bool = False) -> str:
     if value is None:
         return "Undefined"
-    if value == "infinity":
-        return "Infinity"
     if isinstance(value, (int, np.integer)):
         return f"{value:,}"
     return f"{value:.2%}" if percent else f"{value:,.3f}"
@@ -660,33 +610,29 @@ def format_metric(value, *, percent: bool = False) -> str:
 
 def comparison_table(metrics: dict, partition: str) -> pd.DataFrame:
     rows = [
-        ("Gross total P&L (USD)", "trading", "total_gross_pnl_usd", False),
-        ("Completed trades", "trading", "completed_trades", False),
-        ("Win rate", "trading", "win_rate", True),
-        ("Average P&L / trade (USD)", "trading", "average_gross_pnl_usd", False),
-        ("Profit factor", "trading", "profit_factor", False),
-        (
-            "Maximum realized drawdown (USD)",
-            "trading",
-            "maximum_realized_drawdown_usd",
-            False,
-        ),
-        ("Directional accuracy", "predictive", "directional_accuracy", True),
-        ("ROC AUC", "predictive", "roc_auc", False),
-        ("BUY signals", "predictive", "BUY", False),
-        ("SELL signals", "predictive", "SELL", False),
-        ("HOLD signals", "predictive", "HOLD", False),
+        ("Total signals", "valid_observations", False),
+        ("BUY signals", "BUY", False),
+        ("SELL signals", "SELL", False),
+        ("HOLD signals", "HOLD", False),
+        ("BUY fraction", "BUY", True),
+        ("SELL fraction", "SELL", True),
+        ("HOLD fraction", "HOLD", True),
+        ("Overall classification accuracy", "directional_accuracy", True),
+        ("BUY/SELL directional accuracy", "actionable_accuracy", True),
+        ("ROC AUC", "roc_auc", False),
     ]
     columns = {}
     for strategy in STRATEGIES:
-        result = metrics["partitions"][partition][strategy]
+        result = metrics["partitions"][partition][strategy]["predictive"]
         columns[STRATEGY_NAMES[strategy]] = [
             format_metric(
-                result[group]["signal_counts"][key]
+                result["signal_fractions" if percent else "signal_counts"][key]
                 if key in ("BUY", "SELL", "HOLD")
-                else result[group][key],
+                else None
+                if strategy == "momentum" and key == "directional_accuracy"
+                else result[key],
                 percent=percent,
             )
-            for _, group, key, percent in rows
+            for _, key, percent in rows
         ]
     return pd.DataFrame(columns, index=[row[0] for row in rows])

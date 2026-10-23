@@ -11,7 +11,6 @@ from anttrader.dashboard import (
     RECOVERY,
     STRATEGY_NAMES,
     comparison_table,
-    equity_chart,
     format_metric,
     grid_chart,
     input_signature,
@@ -45,10 +44,10 @@ def jump_to_checkpoint():
 def main(config_path: Path = DEFAULT_CONFIG) -> None:
     st.set_page_config(page_title="AntTrader", layout="wide")
     st.title("AntTrader")
-    st.write("Langton's Ant Trading Research — XAU/USD 1H")
+    st.write("Langton's Ant Signal Research — XAU/USD 1H")
     st.warning(DISCLAIMER)
     status = st.empty()
-    tabs = st.tabs(["Ant Simulation", "Gold & Signals", "Backtest & Comparison"])
+    tabs = st.tabs(["Ant Simulation", "Gold & Signals"])
     try:
         signature = input_signature(config_path)
         with st.spinner("Validating the saved research experiment..."):
@@ -82,8 +81,7 @@ def main(config_path: Path = DEFAULT_CONFIG) -> None:
         st.json(research.config)
         st.caption(
             "Frozen training-only models. Probabilities are uncalibrated estimates. "
-            "Four-hour theoretical trades; fixed quantity; zero costs. "
-            "Realized equity does not measure intratrade losses. "
+            "The four-hour horizon defines forecast labels only. "
             "One historical split cannot establish a reliable market edge."
         )
 
@@ -201,13 +199,15 @@ def main(config_path: Path = DEFAULT_CONFIG) -> None:
             "Displayed strategy", list(STRATEGY_NAMES), format_func=STRATEGY_NAMES.get
         )
         signals = research.signals.loc[research.signals.partition.eq(partition)]
-        trades = research.trades.loc[
-            research.trades.partition.eq(partition)
-            & research.trades.strategy.eq(strategy)
-        ]
         first = signals.decision_timestamp.iloc[0].date()
-        last = signals.exit_timestamp.iloc[-1].date()
-        default_start = max(first, last - pd.Timedelta(days=30))
+        last = signals.decision_timestamp.iloc[-1].date()
+        default_start = max(first, last - pd.Timedelta(days=10))
+        sides = st.multiselect(
+            "Signal markers",
+            ["BUY", "SELL"],
+            default=["BUY", "SELL"],
+            key="visible_sides",
+        )
         dates = st.date_input(
             "Chart date range (UTC)",
             value=(default_start, last),
@@ -228,84 +228,78 @@ def main(config_path: Path = DEFAULT_CONFIG) -> None:
                 signals.decision_timestamp.ge(start)
                 & signals.decision_timestamp.lt(stop)
             ]
-            visible_trades = trades.loc[
-                trades.entry_timestamp.lt(stop) & trades.exit_timestamp.ge(start)
-            ]
             st.caption(
                 f"Active partition: {partition.title()} · {STRATEGY_NAMES[strategy]} · "
-                "Small triangles: predictions · Large diamonds: executed entries · Crosses: exits"
+                "Green triangles: BUY · Red triangles: SELL · HOLD remains in the table. "
+                "Markers use the preceding completed candle with a visual offset, not an execution price."
             )
             if candles.empty:
                 st.info("No historical candles exist in this date range.")
             else:
                 st.plotly_chart(
                     price_chart(
-                        candles, visible_signals, visible_trades, strategy, partition
+                        research.candles,
+                        visible_signals,
+                        strategy,
+                        partition,
+                        visible_sides=tuple(sides),
+                        start=start,
+                        stop=stop,
                     ),
                     width="stretch",
                     key="gold_chart",
+                    config={"scrollZoom": True, "displaylogo": False},
                 )
-            st.subheader("Executed theoretical trades")
-            st.caption(
-                "Trades overlapping the date range. Prices and timestamps come from saved "
-                "trade records. Not every prediction becomes a trade."
-            )
-            st.dataframe(visible_trades, hide_index=True, width="stretch")
             st.subheader("Signal history")
             st.caption(
                 "All strategies, including HOLD. Click a column to sort. "
                 "target and future_return are retrospective outcomes, never model inputs. "
                 "target = 1 means a positive future return; target = 0 means zero or negative."
             )
-            st.dataframe(visible_signals, hide_index=True, width="stretch")
+            st.dataframe(
+                visible_signals[
+                    [
+                        "decision_timestamp",
+                        "ant_signal",
+                        "ant_p_up",
+                        "reference_price",
+                        "partition",
+                        "momentum_signal",
+                        "raw_signal",
+                        "raw_p_up",
+                        "target",
+                        "label_end_timestamp",
+                        "future_return",
+                    ]
+                ],
+                hide_index=True,
+                width="stretch",
+            )
 
-    with tabs[2]:
-        st.subheader("Backtest & Comparison")
-        partition = st.selectbox(
-            "Performance partition", ["Test", "Validation"], key="performance_partition"
-        ).lower()
+        st.subheader("Prediction statistics")
         st.caption(
-            f"Active partition: {partition.title()} · All P&L is gross price-only simulated USD"
+            f"{partition.title()} · Full saved partition; independent of the chart date range and marker filters."
         )
-        result = research.metrics["partitions"][partition]["ant"]["trading"]
-        first, second, third = st.columns(3)
-        first.metric(
-            "AntTrader gross P&L (USD)", format_metric(result["total_gross_pnl_usd"])
-        )
-        second.metric(
-            "Completed AntTrader trades", format_metric(result["completed_trades"])
-        )
-        third.metric(
-            "AntTrader win rate", format_metric(result["win_rate"], percent=True)
-        )
-        st.dataframe(
-            comparison_table(research.metrics, partition), height=460, width="stretch"
-        )
-        st.plotly_chart(
-            equity_chart(research.equity, partition),
-            width="stretch",
-            key="equity_chart",
-        )
-        st.caption(
-            "Equity realizes P&L at completed exits and includes the initial zero baseline. "
-            "Final equity reconciles with the stored total gross P&L for every strategy. "
-            "Maximum drawdown excludes intratrade losses."
-        )
+        st.dataframe(comparison_table(research.metrics, partition), width="stretch")
         with st.expander("Metric definitions and undefined values"):
+            st.write(
+                "Overall classification accuracy uses P(up) >= 0.5 across all eligible "
+                "model predictions, including HOLD. BUY/SELL directional accuracy excludes HOLD. "
+                "BUY predicts a positive four-hour label; SELL predicts a zero or negative label. "
+                "Momentum accuracy uses non-HOLD observations only. "
+                "Statistics evaluate retrospective labels, not trading performance."
+            )
             for strategy, name in STRATEGY_NAMES.items():
-                metrics = research.metrics["partitions"][partition][strategy]
-                predictive, trading = metrics["predictive"], metrics["trading"]
-                st.write(f"**{name}**: {predictive['accuracy_scope']}.")
+                metrics = research.metrics["partitions"][partition][strategy][
+                    "predictive"
+                ]
+                st.write(f"**{name}**: {metrics['accuracy_scope']}.")
                 for note in (
-                    predictive["roc_auc_note"],
-                    trading["profit_factor_note"],
-                    trading["undefined_note"],
+                    metrics["roc_auc_note"],
+                    metrics["actionable_accuracy_note"],
                 ):
                     if note:
                         st.write(note)
-            st.caption(
-                "Undefined means the metric has no defined value. Infinity means profit with no gross losses."
-            )
 
 
 if __name__ == "__main__":

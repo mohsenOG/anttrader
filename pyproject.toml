@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "anttrader"
 version = "0.1.0"
-description = "Langton's Ant trading signal research for Gold (XAU/USD) using Python."
+description = "Langton's Ant signal research for Gold (XAU/USD) using Python."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

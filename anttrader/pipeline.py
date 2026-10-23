@@ -1,4 +1,4 @@
-"""Run configured historical XAU/USD grids, ant features, or the fixed backtest."""
+"""Run configured historical XAU/USD grids, ant features, or saved signals."""
 
 import argparse
 import csv
@@ -30,13 +30,13 @@ def main(
     stage: str = "grids",
     limit: int | None = None,
 ) -> None:
-    """Run the grid demonstration, feature export, or historical backtest."""
+    """Run the grid demonstration, feature export, or historical signals."""
     config_path = Path(config_path)
     started = perf_counter()
     as_of = pd.Timestamp.now(tz="UTC")
     try:
-        if stage not in ("grids", "features", "backtest"):
-            raise ValueError("stage must be grids, features, or backtest.")
+        if stage not in ("grids", "features", "signals"):
+            raise ValueError("stage must be grids, features, or signals.")
         if limit is not None and (
             type(limit) is not int or limit < 1 or stage != "features"
         ):
@@ -67,7 +67,7 @@ def main(
             simulation = SimulationConfig(**config["simulation"])
         path = config_path.resolve().parent / config["historical_csv"]
         if not path.is_file():
-            if stage in ("features", "backtest"):
+            if stage in ("features", "signals"):
                 raise FileNotFoundError(
                     f"Historical CSV missing: {path}. See README.md."
                 )
@@ -103,7 +103,7 @@ def main(
                 started=started,
             )
             return
-        if stage == "backtest":
+        if stage == "signals":
             from anttrader.experiment import run_experiment
 
             run_experiment(candles, config, config_path, path)
@@ -240,7 +240,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument(
-        "--stage", choices=("grids", "features", "backtest"), default="grids"
+        "--stage", choices=("grids", "features", "signals"), default="grids"
     )
     parser.add_argument("--limit", type=int, help="First N windows (features only).")
     args = parser.parse_args()

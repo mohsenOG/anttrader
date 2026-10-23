@@ -1,19 +1,10 @@
 # AntTrader
 
-Experimental Langton's Ant research for spot gold (XAU/USD) on the **1-hour**
-timeframe. Profitability is unknown. This project uses historical data only.
+AntTrader is a signal research tool, not a trade simulator. It uses historical
+Dukascopy XAU/USD hourly candles, Langton's Ant, and a frozen logistic decoder
+to study BUY / SELL / HOLD predictions. BUY and SELL are directional predictions.
 
-Implemented: project setup, validated CSV ingestion, binary log-return encoding,
-rolling serpentine grids, deterministic ant simulation, behavioral feature CSV
-export, optional replay recording, frozen logistic decoders, comparable historical
-backtests, and a three-tab Streamlit dashboard.
-
-The ant is a deterministic transformation of a binary market grid. The research
-compares its behavioral features with momentum and the original binary inputs;
-complex ant behavior alone does not imply useful market predictions.
-
-Market data -> Grid encoding -> Ant simulation -> Feature extraction ->
-Signal decoder -> Backtester -> Streamlit dashboard.
+Market data -> Grid -> Ant simulation -> Features -> Decoder -> Saved signals.
 
 ## Installation
 
@@ -27,67 +18,56 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-Activation is optional. Use `.venv\Scripts\python.exe` instead of `python` and
-`.venv\Scripts\ruff.exe` instead of `ruff` if PowerShell blocks activation.
-No global execution-policy change is required. Configuration is in `config.yaml`.
-No additional dependencies or services are needed for the dashboard.
+Activation is optional. Use `.venv\Scripts\python.exe` and
+`.venv\Scripts\ruff.exe` directly if activation is blocked.
+Configuration is in config.yaml. No additional dependency or service is needed.
 
-## Run the local application
+## Run
 
-Prepare the Dukascopy CSV as described below, then run these commands from the
-repository root with the virtual environment active:
+Prepare the local Dukascopy CSV as described below. From the repository root:
 
 ```powershell
 python -m anttrader.pipeline
 python -m anttrader.pipeline --stage features
-python -m anttrader.pipeline --stage backtest
+python -m anttrader.pipeline --stage signals
 streamlit run app.py
 ```
 
-The first command checks candles and grid encoding. Feature generation must
-cover the full dataset: do not use --limit for a research run. Open the local
-URL printed by Streamlit. Configuration and output paths come from config.yaml;
-paths are resolved relative to that file. Datasets and generated research
-results remain local and are excluded from Git.
+The first command checks candles and grids. Generate the complete feature export
+without `--limit`. Existing complete features can be reused when source and
+simulation settings match. Run the signals command once after upgrading to
+replace legacy signals/metrics/metadata. Old local trade/equity files are unused
+and can remain. Paths resolve relative to config.yaml. Generated data stays out
+of Git. The dashboard never generates features, trains models, or runs experiments.
 
 ## Dashboard
 
-- **Ant Simulation:** select a saved feature timestamp. Compare its original
-  market grid with the recorded ant replay from step 0 through 2,048. Jump to a
-  checkpoint and inspect current pose, read counts, turn/cell fractions, entropy,
-  and unwrapped displacement. Saved checkpoint features must match the selected
-  simulation. An associated prediction appears only if it exists in signals.csv.
-- **Gold & Signals:** inspect historical bid candlesticks, BUY/SELL predictions,
-  executed entries, and completed exits. Select a partition, displayed strategy,
-  and UTC date range. The initial range covers the recent month of that
-  partition. Sort the trade and signal tables by clicking their headers.
-  HOLD observations remain in the table. Future targets are retrospective
-  outcomes, never model inputs. Latest Historical Signal refers to the last
-  saved AntTrader prediction.
-- **Backtest & Comparison:** select Test (default) or Validation. Compare saved
-  metrics and realized gross-P&L curves for AntTrader, Momentum, and raw-input
-  logistic regression. Undefined metrics include explanatory notes; profit
-  factor can be infinite. Partitions are never combined.
+- **Ant Simulation:** select a feature timestamp, inspect the original 16 x 16
+  grid, replay steps 0–2,048, jump to checkpoints, and inspect pose, direction,
+  behavioral features, and an exact associated saved signal when available.
+- **Gold & Signals:** inspect a full-width 800-pixel candlestick chart. Large
+  green upward BUY and red downward SELL triangles mark actual decision times.
+  Select Test or Validation, a comparison method, dates, and visible marker sides.
+  The default range is the latest ten calendar days of the selected partition.
+  Use the Plotly toolbar, drag to pan, and scroll to zoom. HOLD stays in the table.
+  Latest Historical Signal shows the latest saved AntTrader row, not a live signal.
 
-Research settings are read-only. The dashboard never downloads data, generates
-features, trains models, or reruns trading simulations. It caches validated
-inputs and up to eight selected replay runs, using file identities to invalidate
-changed results. It reconstructs only the selected ant window.
+Markers use only the latest completed candle's high/low/close, with a visual
+spacing offset. Hover shows the UTC decision, direction, P(up), last completed
+close, and evaluation partition. Marker coordinates do not represent execution
+prices. Date and marker controls change display only.
 
-If a file is missing or incompatible, the app shows the path or validation error
-and the recovery commands. Restore the configured market CSV when needed, run
-the complete feature stage, then run the backtest stage. Never substitute dummy
-files or edit exported results to bypass validation. For older metadata without
-result hashes, rerun the backtest stage. Stop any running pipeline before
-loading a result bundle.
+Prediction statistics below the chart cover the full selected partition,
+independent of chart filters. Overall model classification accuracy uses
+`p_up >= 0.5` across all eligible observations, including HOLD. BUY/SELL accuracy
+excludes HOLD and compares the predicted direction with the four-hour label.
+Momentum accuracy uses non-HOLD rows. ROC AUC is undefined for momentum or a
+single target class. No actionable signals gives undefined BUY/SELL accuracy.
 
-## Limitations
-
-Historical research only. There is no live market feed, broker connection, or
-order execution. P&L uses idealized bid reference prices with zero spread,
-slippage, commission, financing, and execution latency. Results depend on the
-provided dataset and fixed chronological split. Positive historical gross P&L
-does not establish a market edge or guarantee future profitability.
+Missing or incompatible files show their path and recovery commands. Restore
+the source CSV if needed, generate complete features, then run `--stage signals`.
+Do not modify exports to bypass validation. Stop the pipeline before loading
+its saved bundle. Bounded caches invalidate when input files change.
 
 ## Market data
 
@@ -256,7 +236,7 @@ The pipeline resolves the CSV path relative to the configuration file. It prints
 the candle count, date range, validation report, number of historical grids, and
 latest grid with its decision time and window. If the CSV is absent, it prints
 setup instructions. It never supplies fake history. The Streamlit application
-loads saved research results. Generate features and backtests separately;
+loads saved research results. Generate features and signals separately;
 missing inputs produce file-specific errors and recovery commands.
 
 Unit tests use small **synthetic** inputs in temporary directories. They validate OHLC,
@@ -267,7 +247,7 @@ on genuine source data. It uses the explicit 2026-10-01 UTC cutoff for this samp
 
 Read [SPEC.md](SPEC.md) for approved rules and open decisions, [TASKS.md](TASKS.md)
 for verified progress, and [AGENTS.md](AGENTS.md) for agent instructions.
-`config.yaml` contains the approved simulation, decoder, and backtest settings.
+`config.yaml` contains the approved simulation, decoder, and signal research settings.
 
 ## Ant simulation and behavioral features
 
@@ -381,203 +361,77 @@ All **131 pytest tests** and Ruff pass. The Topic 2 CLI remains functional;
 Streamlit passes AppTest and starts with HTTP 200 / health=ok. Local
 `results/topic3_validation.json` records full-data checks and measurements.
 This Topic 3 verification did not evaluate predictive value or trading performance.
-The separate Topic 4 experiment below implements the approved trading rules.
+The signal experiment below retains the approved prediction methodology.
 
-## Signal decoder and historical backtest
+## Signal decoder and historical evaluation
 
-```powershell
-python -m anttrader.pipeline --stage backtest
-```
+The decoder keeps all 60 ant features. A raw-input comparison model uses the
+original 256 chronological binary states. Both models use StandardScaler and
+LogisticRegression with L2, C=1, lbfgs, max_iter=1000, random_state=42. They fit
+training rows only and remain frozen. No thresholds or model settings are tuned.
+Momentum uses four consecutive completed close-to-close intervals.
 
-This command requires the complete configured market CSV and Topic 3 export.
-If features are missing, regenerate them with
-`python -m anttrader.pipeline --stage features` **without `--limit`**. A partial
-export is rejected, even when its metadata declares a limit equal to the full
-row count. There is no partial-history backtest mode. Restore the source CSV
-using the Market data steps above if it is missing; never substitute fake prices.
+At decision D, the candle opening at D-1h has completed. The four-hour horizon
+is retained **only for prediction labeling**:
+`future_return = ln(open[D+4h] / open[D])`; target is 1 when positive, else 0.
+Require every hourly opening from D-1h through D+4h. Exclude gaps and unavailable
+outcomes. Future price fields are retrospective evaluation data, never inputs.
 
-The loader checks source SHA-256, market/encoding and simulation metadata,
-expected row count, exact UTC decision timestamps, stable feature columns,
-and finite numeric values. Only feature-producing configuration is compared
-with Topic 3 metadata: adding Topic 4 configuration does not invalidate features.
-Changing history or the simulation requires a new complete feature export.
+Split all feature rows before exclusions: 60% training, 20% validation, 20% test,
+using floor boundaries. Purge training and validation labels ending at or after
+the next partition's first decision. Keep the existing intersection with valid
+momentum windows. Report validation and test separately.
 
-AntTrader uses all **60 ant features** listed above, without feature selection.
-A scikit-learn pipeline fits **StandardScaler + LogisticRegression** on training
-rows only. Logistic regression uses ordinary L2 regularization, `C=1`, `lbfgs`,
-`max_iter=1000`, and `random_state=42`. The second logistic model uses only the
-**256 original chronological binary return states**, with the same training
-rows and settings. It does not run the ant. Both models remain frozen during
-validation and test. No tuning, calibration, or validation refit is performed.
-Estimated probabilities are not established calibrated real-world probabilities
-and do not directly estimate expected profit.
+- BUY: p_up >= 0.55.
+- SELL: p_up <= 0.45.
+- HOLD: 0.45 < p_up < 0.55.
 
-### Labels, partitions, and signals
+There are no orders, positions, quantities, forced exits, trade simulations,
+P&L, equity curves, or drawdown calculations. Probabilities are uncalibrated
+model estimates. Historical prediction accuracy does not prove profitable trading.
 
-At decision **D**, the candle opening at **D-1h** has just completed. The
-idealized entry is the next candle's **bid opening price at D**. Exit uses the
-bid opening price at **D+4h**. Every hourly timestamp from D-1h through D+4h
-must exist. Missing entry, intermediate, or exit hours exclude the observation;
-weekends and session gaps cannot become continuous four-hour trades. No prices
-are interpolated. Entry assumes zero processing and execution latency at the
-hourly boundary. This is a theoretical reference-price convention.
-
-`future_return = ln(exit_open / entry_open)`. The label is **1** when positive,
-otherwise **0**. Future prices and labels never enter the input features.
-
-Split all feature rows chronologically before exclusions: first 60% training,
-next 20% validation, final 20% test. Boundaries use floor(0.60*N) and
-floor(0.80*N). Training and validation outcomes must end **strictly before**
-the next partition's first decision. Purge crossing labels. Test exits must be
-available in the historical source. Validation and test are reported separately.
-
-- **BUY:** p_up >= 0.55.
-- **SELL:** p_up <= 0.45.
-- **HOLD:** 0.45 < p_up < 0.55.
-
-Momentum uses four completed consecutive hourly close-to-close intervals
-(**five completed closes**). Positive momentum means BUY, negative means SELL,
-and exactly zero means HOLD. A missing historical hour makes momentum invalid.
-All three approaches use the intersection of valid labels, valid momentum
-windows, and protected partition dates. They use identical execution rules.
-
-### Positions, P&L, and metrics
-
-Each strategy starts flat in each evaluation partition. A BUY opens a long;
-a SELL opens a short; HOLD opens nothing. Hold exactly four consecutive hours,
-with at most one position open. Ignore new signals while open, but retain
-predictions in signal history. Reentry is allowed at the preceding exit opening.
-Do not enter without an available full exit. Quantity is fixed at one troy ounce;
-there is no compounding, stop-loss, take-profit, leverage, or live execution.
-
-`gross_pnl_usd = direction * (exit_open - entry_open) * quantity_ounces`, where
-long direction is +1 and short is -1. Both sides use bid opening prices as the
-same theoretical reference. **All reported P&L is gross price-only simulated
-P&L.** There is no spread, synthetic spread, slippage, commission, swap, or
-financing. These results are theoretical price-only backtests, not executable
-net returns.
-
-Trading metrics include completed/BUY/SELL trade counts, total and average
-gross P&L, win rate, gross profit, gross loss (positive magnitude), profit
-factor, maximum realized-equity drawdown, and long/short P&L. Equity starts at
-zero and accumulates only completed trades. Drawdown includes the initial zero
-baseline; it does not measure intratrade losses. No-trade win rate, average
-P&L, and profit factor are undefined. Profit factor without losses is
-`"infinity"` when profit exists, otherwise null; associated notes explain why.
-
-Predictive metrics include observation counts, BUY/SELL/HOLD counts/fractions,
-directional accuracy, and ROC AUC. Logistic accuracy uses p_up >= 0.5 across
-all eligible observations, including HOLD predictions. Momentum accuracy uses
-non-HOLD observations. Momentum has no probability/AUC. A single-class target
-has undefined ROC AUC. Undefined JSON metrics use null with a reason, never NaN.
-
-### Outputs
-
-Paths are configured in `config.yaml` and resolved relative to that file:
+### Saved outputs
 
 | File | Content |
 | --- | --- |
-| results/signals.csv | Validation/test decision, partition, target, execution prices, both model probabilities/signals, momentum signal |
-| results/trades.csv | Strategy/partition, decision, signal/probability, entry/exit times and prices, direction, quantity, duration, gross P&L |
-| results/equity.csv | Strategy/partition, initial zero, completed-trade timestamp and cumulative gross P&L |
-| results/metrics.json | Separate validation/test predictive and trading metrics for all three strategies |
-| results/experiment.metadata.json | Source/feature/config identities and hashes, simulation, model settings, columns, dates/counts, exclusions, assumptions, library versions |
+| results/signals.csv | Decision, partition, last completed close, model probabilities/signals, momentum, retrospective label fields |
+| results/metrics.json | Separate validation/test predictive counts, fractions, overall/actionable accuracy and ROC AUC |
+| results/experiment.metadata.json | Input/output hashes, configuration, model settings, boundaries, counts, exclusions and versions |
 
-Momentum trade probability is empty because this strategy has no probability
-estimate. Signals include all eligible predictions, including those ignored
-while a position is open. Generated outputs remain local and excluded from Git.
-Identical source files, configuration, feature metadata, and library versions
-produce byte-identical exports. Re-running replaces these result files.
-Output paths must be distinct and must not overwrite source, features, their
-metadata, or configuration. The dashboard reads these saved outputs without
-training models or generating
-predictions. Experiment metadata also includes SHA-256 hashes for all four
-result files. After upgrading from Topic 4, run the backtest command once to
-generate this manifest. Mixed, modified, or stale result files are rejected.
+Labels use `label_start_timestamp`, `label_start_price`, `label_end_timestamp`,
+`label_end_price`, `future_return`, `target`, `target_valid`, and `target_exclusion`.
+`reference_price` is the last completed candle close. There are no entry/exit
+fields. Complete source/feature identities, exact eligible timestamps, labels,
+partitions, momentum, threshold classifications, and predictive metrics are
+validated on loading. Partial, mixed, stale, or altered results are rejected.
+Same inputs and library versions produce reproducible outputs.
 
-### Verified full historical experiment (2026-10-23)
+### Verification
 
-The source has **29,567 retained candles** and **29,311 feature observations**.
-There are **22,914 valid four-hour labels**. Exclusions are **6,393** forward
-market-gap observations, **4** unavailable final outcomes, **5,112** additional
-past-momentum gap observations, and **4** boundary rows after intersection.
-The shared dataset contains **17,798 observations**. Prediction horizon and
-holding period are both **four consecutive hourly bars**; quantity is one ounce.
+Use the local virtual environment:
 
-All dates below are UTC. Original partition boundaries are fixed before filtering:
+```powershell
+python -m pytest -q
+ruff check .
+```
 
-| Partition | Original rows | Original first decision | Original last decision |
-| --- | ---: | --- | --- |
-| Training | 17,586 | 2021-10-18 04:00 | 2024-10-07 07:00 |
-| Validation | 5,862 | 2024-10-07 08:00 | 2025-10-03 02:00 |
-| Test | 5,863 | 2025-10-03 03:00 | 2026-10-01 00:00 |
+The tests cover unchanged ant/grid behavior, frozen training-only predictions,
+thresholds, future-data independence, label timestamps, boundary purging,
+signal statistics, past-only marker placement, replay, missing/stale bundles,
+and Streamlit controls without trade/equity files.
 
-| Partition | Eligible rows | First eligible decision | Last eligible decision | Last exit |
-| --- | ---: | --- | --- | --- |
-| Training | 10,679 | 2021-10-18 04:00 | 2024-10-07 03:00 | 2024-10-07 07:00 |
-| Validation | 3,558 | 2024-10-07 08:00 | 2025-10-02 16:00 | 2025-10-02 20:00 |
-| Test | 3,561 | 2025-10-03 03:00 | 2026-09-30 16:00 | 2026-09-30 20:00 |
+Signals-only verification (2026-10-23): local Python 3.13.11 passes all 192
+applicable tests, Ruff, and git diff --check. All 7,119 saved historical
+predictions match the previous implementation exactly, including both model
+probabilities (maximum difference 0.0). Source data, ant features, and grid/ant
+computation are unchanged. Repeated signal runs produce byte-identical outputs.
+Browser checks verify both tabs, partitions, marker filtering, final ant replay,
+and BUY/SELL hover data. Streamlit health is ok; no browser errors were reported.
+Local ignored chart screenshots and detailed evidence are listed in TASKS.md.
 
-| Partition / strategy | BUY | SELL | HOLD | Directional accuracy | ROC AUC |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Validation / AntTrader | 469 | 171 | 2,918 | 50.70% | 0.49833 |
-| Validation / Momentum | 1,909 | 1,645 | 4 | 50.56% | Undefined |
-| Validation / Raw input | 1,108 | 907 | 1,543 | 52.25% | 0.52220 |
-| Test / AntTrader | 507 | 297 | 2,757 | 51.81% | 0.52596 |
-| Test / Momentum | 1,828 | 1,733 | 0 | 48.72% | Undefined |
-| Test / Raw input | 1,078 | 1,000 | 1,483 | 50.94% | 0.50495 |
+## Limitations
 
-Test-period results, **gross price-only simulated P&L**, with all costs zero:
-
-| Metric | AntTrader | Momentum | Raw-input model |
-| --- | ---: | ---: | ---: |
-| Completed trades | 465 | 1,015 | 809 |
-| Win rate | 54.84% | 49.75% | 50.68% |
-| Total gross P&L (USD) | 161.969 | 1,475.739 | -1,082.725 |
-| Average gross P&L/trade (USD) | 0.348 | 1.454 | -1.338 |
-| Profit factor | 1.02981 | 1.14538 | 0.88637 |
-| Maximum realized drawdown (USD) | 718.317 | 734.926 | 1,512.654 |
-
-Validation gross P&L: AntTrader **-211.655 USD**, momentum **-387.864 USD**,
-raw input **372.207 USD**. AntTrader's test accuracy/AUC exceed raw input,
-but its validation accuracy/AUC are lower. AntTrader's test gross P&L is
-positive and below momentum. HOLD occurs in **82.01%** of validation and
-**77.42%** of test observations. These findings do not establish a reliable
-market edge. Performance differs between validation and test; sensitivity to
-other split periods has not been tested. No alternative periods or parameters
-were selected to improve results. Zero costs, idealized latency, uncalibrated
-probabilities, overlapping predictive labels, one historical source, and one
-fixed split prevent claims of real trading profitability.
-
-Verification: **162 pytest tests pass** and **Ruff passes** in local Python
-3.13.11. Two complete reruns reproduce all five exports byte for byte.
-Independent execution/label/equity reconciliation passes; 60 sampled ant
-windows reproduce the saved features across the full period. Streamlit passes
-AppTest and starts with HTTP 200 / health=ok. Source and feature files remain
-unchanged. Local `results/topic4_validation.json` records the verification and
-output hashes. No manual input or external-data blocker remains.
-
-## Topic 5 integration verification (2026-10-23)
-
-Local Python 3.13.11 passes **203 pytest tests**, Ruff, and git diff --check.
-A fresh virtual environment installs .[dev], passes pip check, all 203 tests,
-and Ruff. Automated checks cover malformed/missing/stale inputs, duplicate and
-UTC timestamps, replay parity, prediction/trade markers, empty trade files,
-metric reconciliation, partition filters, and Streamlit controls.
-
-Full-data verification loads all saved research outputs, reproduces 60
-historical replay windows and 100 feature-CLI sample rows, and reproduces two
-complete backtest reruns byte for byte. The source, features, and all four
-Topic 4 result files are unchanged. Only metadata adds result hashes.
-
-Headless Chromium exercises the three tabs, timestamp selection, replay slider
-and checkpoints, strategy/partition controls, and charts. Screenshots were
-inspected. Test and validation equity values reconcile with saved metrics;
-no browser JavaScript errors occurred. Streamlit startup returns HTTP 200 and
-health=ok. Local evidence remains in results/topic5_validation.json and
-results/topic5_browser_validation.json. No verification blocker remains.
-
-## Disclaimer
-
-This is experimental research, not financial advice. Historical gross price-only
-results do not establish future profitability. No license is granted yet.
+Historical research only. There is no live feed, broker connection, trade
+execution, or trade simulation. One dataset and one chronological split do not
+establish a reliable market edge. This is experimental research, not financial
+advice. No license is granted yet.
